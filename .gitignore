@@ -1,0 +1,20 @@
+﻿# Bancos de dados e backups
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.bak
+
+# Ambiente virtual
+.venv/
+venv/
+
+# Arquivos temporarios do Python
+__pycache__/
+*.pyc
+
+# Configuracoes locais e segredos
+.env
+.env.*
