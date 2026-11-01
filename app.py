@@ -69,7 +69,10 @@ from utils import (
     ler_tipo,
     ler_valor,
     formatar_moeda,
-    formatar_data
+    formatar_data,
+    ordenar_registros,
+    carregar_preferencia_ordenacao,
+    salvar_preferencia_ordenacao
 )
 
 from datetime import datetime
@@ -123,6 +126,89 @@ def exibir_menu(titulo, descricao, opcoes):
     console.print(tabela)
     console.print()
 
+
+def escolher_ordenacao(
+    modulo,
+    campos,
+    campo_padrao="data",
+    direcao_padrao="desc"
+):
+    """
+    campos: lista de tuplas (nome_interno, nome_exibido).
+    Retorna (campo, direcao).
+    """
+
+    nomes_campos = dict(campos)
+
+    campo_atual, direcao_atual = (
+        carregar_preferencia_ordenacao(
+            modulo,
+            campo_padrao,
+            direcao_padrao
+        )
+    )
+
+    if campo_atual not in nomes_campos:
+        campo_atual = campo_padrao
+        direcao_atual = direcao_padrao
+
+    console.print()
+    console.print(
+        f"[cyan]Ordenação atual:[/cyan] "
+        f"{nomes_campos[campo_atual]} "
+        f"({'Crescente' if direcao_atual == 'asc' else 'Decrescente'})"
+    )
+
+    opcoes = [
+        (str(numero), nome)
+        for numero, (_, nome) in enumerate(campos, start=1)
+    ]
+    opcoes.append(("0", "Manter ordenação atual"))
+
+    exibir_menu(
+        "ORDENAÇÃO",
+        "Escolha o campo para organizar os registros",
+        opcoes
+    )
+
+    escolha = Prompt.ask(
+        "[bold cyan]Escolha uma opção[/bold cyan]"
+    ).strip()
+
+    if escolha == "0":
+        return campo_atual, direcao_atual
+
+    if not escolha.isdigit():
+        console.print("[red]Opção inválida. Mantendo ordenação.[/red]")
+        return campo_atual, direcao_atual
+
+    indice = int(escolha) - 1
+
+    if indice < 0 or indice >= len(campos):
+        console.print("[red]Opção inválida. Mantendo ordenação.[/red]")
+        return campo_atual, direcao_atual
+
+    campo_escolhido = campos[indice][0]
+
+    direcao = Prompt.ask(
+        "[cyan]Direção[/cyan] "
+        "([bold]1[/bold] Crescente / "
+        "[bold]2[/bold] Decrescente)",
+        choices=["1", "2"],
+        default="2" if direcao_atual == "desc" else "1"
+    )
+
+    direcao_escolhida = "asc" if direcao == "1" else "desc"
+
+    salvar_preferencia_ordenacao(
+        modulo,
+        campo_escolhido,
+        direcao_escolhida
+    )
+
+    return campo_escolhido, direcao_escolhida
+
+
 # ============================================================
 # INICIALIZAÇÃO
 # ============================================================
@@ -165,30 +251,122 @@ def mostrar_lancamento(lancamento):
         f"{formatar_moeda(valor)}"
     )
 
+
 def mostrar_lancamentos():
-    print()
-    print("========================================")
-    print("           LISTA DE LANÇAMENTOS")
-    print("========================================")
-    print()
+    console.print()
+
+    console.print(
+        Panel(
+            "[bold cyan]LISTA DE LANÇAMENTOS[/bold cyan]\n"
+            "[dim]Consulte suas receitas e despesas registradas[/dim]",
+            border_style="cyan",
+            expand=False,
+            padding=(1, 4)
+        )
+    )
 
     lancamentos = listar_lancamentos()
 
     if not lancamentos:
-        print("Nenhum lançamento encontrado.")
+        console.print(
+            "[yellow]Nenhum lançamento encontrado.[/yellow]"
+        )
         return
 
-    print(
-        "ID | DATA       | DESCRIÇÃO"
-        "                 | TIPO     | CATEGORIA"
-        "        | VALOR"
+    campos_ordenacao = [
+        ("id", "ID"),
+        ("data", "Data"),
+        ("descricao", "Descrição"),
+        ("tipo", "Tipo"),
+        ("categoria", "Categoria"),
+        ("valor", "Valor")
+    ]
+
+    indices = {
+        "id": 0,
+        "data": 1,
+        "descricao": 2,
+        "tipo": 3,
+        "categoria": 4,
+        "valor": 5
+    }
+
+    tipos = {
+        "id": "numero",
+        "data": "data",
+        "descricao": "texto",
+        "tipo": "texto",
+        "categoria": "texto",
+        "valor": "numero"
+    }
+
+    campo, direcao = escolher_ordenacao(
+        modulo="lancamentos",
+        campos=campos_ordenacao,
+        campo_padrao="data",
+        direcao_padrao="desc"
     )
-    print("-" * 100)
+
+    lancamentos = ordenar_registros(
+        registros=lancamentos,
+        campo=campo,
+        indice_campos=indices,
+        direcao=direcao,
+        tipos_campos=tipos
+    )
+
+
+    tabela = Table(
+        show_header=True,
+        header_style="bold cyan",
+        border_style="bright_black",
+        expand=True
+    )
+
+    tabela.add_column("ID", justify="center", style="dim")
+    tabela.add_column("Data", justify="center", no_wrap=True)
+    tabela.add_column("Descrição", overflow="fold")
+    tabela.add_column("Tipo", justify="center")
+    tabela.add_column("Categoria")
+    tabela.add_column("Valor", justify="right", no_wrap=True)
 
     for lancamento in lancamentos:
-        mostrar_lancamento(lancamento)
+        (
+            id_lancamento,
+            data,
+            descricao,
+            tipo,
+            categoria,
+            valor,
+        ) = lancamento
 
-    print("-" * 100)
+        tipo_texto = str(tipo).lower()
+
+        if tipo_texto == "receita":
+            tipo_formatado = "[green]Receita[/green]"
+            valor_formatado = (
+                f"[bold green]{formatar_moeda(valor)}[/bold green]"
+            )
+        else:
+            tipo_formatado = "[red]Despesa[/red]"
+            valor_formatado = (
+                f"[bold red]{formatar_moeda(valor)}[/bold red]"
+            )
+
+        tabela.add_row(
+            str(id_lancamento),
+            str(formatar_data(data)),
+            str(descricao),
+            tipo_formatado,
+            str(categoria),
+            valor_formatado
+        )
+
+    console.print(tabela)
+    console.print(
+        f"[dim]Total de lançamentos: {len(lancamentos)}[/dim]"
+    )
+
 
 def mostrar_detalhes_lancamento(lancamento):
     (
@@ -1032,32 +1210,82 @@ def excluir_lancamento_menu():
 # MENU DE LANÇAMENTOS
 # ============================================================
 
-def mostrar_recorrencias():
-    print()
-    print("========================================")
-    print("           RECORRÊNCIAS")
-    print("========================================")
 
+def mostrar_recorrencias():
     recorrencias = listar_recorrencias()
 
     if not recorrencias:
-        print()
-        print("Nenhuma recorrência cadastrada.")
+        console.print(
+            "\n[yellow]Nenhuma recorrência cadastrada.[/yellow]"
+        )
         return
 
-    print()
+    campos_ordenacao = [
+        ("id", "ID"),
+        ("descricao", "Descrição"),
+        ("tipo", "Tipo"),
+        ("categoria", "Categoria"),
+        ("valor", "Valor"),
+        ("frequencia", "Frequência"),
+        ("data_inicio", "Data de início"),
+        ("data_fim", "Data de fim"),
+        ("ativa", "Status")
+    ]
 
-    print(
-        f"{'ID':<4}"
-        f"{'DESCRIÇÃO':<18}"
-        f"{'TIPO':<10}"
-        f"{'CATEGORIA':<15}"
-        f"{'VALOR':<15}"
-        f"{'FREQ.':<10}"
-        f"STATUS"
+    indices = {
+        "id": 0,
+        "descricao": 1,
+        "tipo": 2,
+        "categoria": 3,
+        "valor": 4,
+        "frequencia": 5,
+        "data_inicio": 6,
+        "data_fim": 7,
+        "ativa": 8
+    }
+
+    tipos = {
+        "id": "numero",
+        "descricao": "texto",
+        "tipo": "texto",
+        "categoria": "texto",
+        "valor": "numero",
+        "frequencia": "texto",
+        "data_inicio": "data",
+        "data_fim": "data",
+        "ativa": "numero"
+    }
+
+    campo, direcao = escolher_ordenacao(
+        modulo="recorrencias",
+        campos=campos_ordenacao,
+        campo_padrao="ativa",
+        direcao_padrao="desc"
     )
 
-    print("-" * 90)
+    recorrencias = ordenar_registros(
+        registros=recorrencias,
+        campo=campo,
+        indice_campos=indices,
+        direcao=direcao,
+        tipos_campos=tipos
+    )
+
+    tabela = Table(
+        title="RECORRÊNCIAS",
+        show_header=True,
+        header_style="bold cyan"
+    )
+
+    tabela.add_column("ID", justify="right", style="dim")
+    tabela.add_column("Descrição")
+    tabela.add_column("Tipo")
+    tabela.add_column("Categoria")
+    tabela.add_column("Valor", justify="right")
+    tabela.add_column("Frequência")
+    tabela.add_column("Início", justify="center")
+    tabela.add_column("Fim", justify="center")
+    tabela.add_column("Status", justify="center")
 
     for recorrencia in recorrencias:
         (
@@ -1072,27 +1300,48 @@ def mostrar_recorrencias():
             ativa
         ) = recorrencia
 
-        if ativa:
-            status = "🟢 ATIVA"
-        else:
-            status = "⏸️ PAUSADA"
-
-        print(
-            f"{id_recorrencia:<4}"
-            f"{descricao[:16]:<18}"
-            f"{tipo:<10}"
-            f"{categoria[:13]:<15}"
-            f"{formatar_moeda(valor):<15}"
-            f"{frequencia:<10}"
-            f"{status}"
+        status = (
+            "[green]ATIVA[/green]"
+            if ativa
+            else "[yellow]PAUSADA[/yellow]"
         )
 
-    print("-" * 90)
+        cor_tipo = (
+            "green" if tipo == "receita"
+            else "red" if tipo == "despesa"
+            else "white"
+        )
 
-    print()
-    print("Legenda:")
-    print("🟢 ATIVA")
-    print("⏸️ PAUSADA")
+        inicio = (
+            formatar_data(data_inicio)
+            if data_inicio
+            else "-"
+        )
+
+        fim = (
+            formatar_data(data_fim)
+            if data_fim
+            else "-"
+        )
+
+        tabela.add_row(
+            str(id_recorrencia),
+            str(descricao),
+            f"[{cor_tipo}]{tipo}[/{cor_tipo}]",
+            str(categoria),
+            formatar_moeda(valor),
+            str(frequencia),
+            inicio,
+            fim,
+            status
+        )
+
+    console.print()
+    console.print(tabela)
+    console.print(
+        f"[dim]Total de recorrências: {len(recorrencias)}[/dim]"
+    )
+
 
 def mostrar_ocorrencias_recorrencia():
     print()
@@ -2893,34 +3142,80 @@ def novo_parcelamento():
         f"{parcelamento_id}"
     )
 
-def mostrar_parcelamentos():
-    print()
-    print("========================================")
-    print("           PARCELAMENTOS")
-    print("========================================")
 
+def mostrar_parcelamentos():
     parcelamentos = listar_parcelamentos()
 
     if not parcelamentos:
-        print()
-        print("Nenhum parcelamento cadastrado.")
+        console.print(
+            "\n[yellow]Nenhum parcelamento cadastrado.[/yellow]"
+        )
         return
 
-    print()
+    campos_ordenacao = [
+        ("id", "ID"),
+        ("descricao", "Descrição"),
+        ("tipo", "Tipo"),
+        ("categoria", "Categoria"),
+        ("valor_total", "Valor total"),
+        ("quantidade_parcelas", "Quantidade de parcelas"),
+        ("data_inicio", "Data de início"),
+        ("ativa", "Status")
+    ]
 
-    print(
-        f"{'ID':<5}"
-        f"{'DESCRIÇÃO':<18}"
-        f"{'TIPO':<10}"
-        f"{'CATEGORIA':<15}"
-        f"{'PARCELA':<16}"
-        f"{'TOTAL':<16}"
-        f"{'PARCELAS':<10}"
-        f"{'PROGRESSO':<14}"
-        f"STATUS"
+    indices = {
+        "id": 0,
+        "descricao": 1,
+        "tipo": 2,
+        "categoria": 3,
+        "valor_total": 4,
+        "quantidade_parcelas": 5,
+        "data_inicio": 6,
+        "ativa": 7
+    }
+
+    tipos = {
+        "id": "numero",
+        "descricao": "texto",
+        "tipo": "texto",
+        "categoria": "texto",
+        "valor_total": "numero",
+        "quantidade_parcelas": "numero",
+        "data_inicio": "data",
+        "ativa": "numero"
+    }
+
+    campo, direcao = escolher_ordenacao(
+        modulo="parcelamentos",
+        campos=campos_ordenacao,
+        campo_padrao="ativa",
+        direcao_padrao="desc"
     )
 
-    print("-" * 125)
+    parcelamentos = ordenar_registros(
+        registros=parcelamentos,
+        campo=campo,
+        indice_campos=indices,
+        direcao=direcao,
+        tipos_campos=tipos
+    )
+
+    tabela = Table(
+        title="PARCELAMENTOS",
+        show_header=True,
+        header_style="bold cyan"
+    )
+
+    tabela.add_column("ID", justify="right", style="dim")
+    tabela.add_column("Descrição")
+    tabela.add_column("Tipo")
+    tabela.add_column("Categoria")
+    tabela.add_column("Parcela", justify="right")
+    tabela.add_column("Total", justify="right")
+    tabela.add_column("Parcelas", justify="center")
+    tabela.add_column("Início", justify="center")
+    tabela.add_column("Progresso", justify="center")
+    tabela.add_column("Status", justify="center")
 
     for parcelamento in parcelamentos:
         (
@@ -2936,6 +3231,8 @@ def mostrar_parcelamentos():
 
         valor_parcela = (
             valor_total / quantidade_parcelas
+            if quantidade_parcelas > 0
+            else 0
         )
 
         resumo = resumo_parcelas_parcelamento(
@@ -2950,42 +3247,52 @@ def mostrar_parcelamentos():
             valor_pendente
         ) = resumo
 
-        progresso = (
-            f"{parcelas_pagas}/"
-            f"{total_parcelas}"
-        )
+        progresso = f"{parcelas_pagas}/{total_parcelas}"
 
-        if parcelas_pagas == total_parcelas:
-            progresso = (
-                f"{progresso} 🟢"
-            )
+        if total_parcelas > 0 and parcelas_pagas == total_parcelas:
+            progresso = f"[green]{progresso}[/green]"
         elif parcelas_pagas > 0:
-            progresso = (
-                f"{progresso} 🟡"
-            )
+            progresso = f"[yellow]{progresso}[/yellow]"
         else:
-            progresso = (
-                f"{progresso} 🔴"
-            )
+            progresso = f"[red]{progresso}[/red]"
 
-        if ativa:
-            status = "🟢 ATIVO"
-        else:
-            status = "⏸️ INATIVO"
-
-        print(
-            f"{id_parcelamento:<5}"
-            f"{descricao[:16]:<18}"
-            f"{tipo:<10}"
-            f"{categoria[:13]:<15}"
-            f"{formatar_moeda(valor_parcela):<16}"
-            f"{formatar_moeda(valor_total):<16}"
-            f"{quantidade_parcelas:<10}"
-            f"{progresso:<14}"
-            f"{status}"
+        status = (
+            "[green]ATIVO[/green]"
+            if ativa
+            else "[yellow]INATIVO[/yellow]"
         )
 
-    print("-" * 125)
+        cor_tipo = (
+            "green" if tipo == "receita"
+            else "red" if tipo == "despesa"
+            else "white"
+        )
+
+        inicio = (
+            formatar_data(data_inicio)
+            if data_inicio
+            else "-"
+        )
+
+        tabela.add_row(
+            str(id_parcelamento),
+            str(descricao),
+            f"[{cor_tipo}]{tipo}[/{cor_tipo}]",
+            str(categoria),
+            formatar_moeda(valor_parcela),
+            formatar_moeda(valor_total),
+            str(quantidade_parcelas),
+            inicio,
+            progresso,
+            status
+        )
+
+    console.print()
+    console.print(tabela)
+    console.print(
+        f"[dim]Total de parcelamentos: {len(parcelamentos)}[/dim]"
+    )
+
 
 # ============================================================
 # RESUMOS
@@ -4052,24 +4359,77 @@ def menu_relatorios():
 # CATEGORIAS
 # ============================================================
 
-def listar_todas_categorias():
-    print()
-    print("========================================")
-    print("             CATEGORIAS")
-    print("========================================")
 
+def listar_todas_categorias():
     categorias = listar_categorias()
 
-    for numero, categoria in enumerate(
-        categorias,
-        start=1
-    ):
-        categoria_id, nome, tipo = categoria
-
-        print(
-            f"{numero} - "
-            f"{nome} ({tipo})"
+    if not categorias:
+        console.print(
+            "\n[yellow]Nenhuma categoria cadastrada.[/yellow]"
         )
+        return
+
+    campos_ordenacao = [
+        ("id", "ID"),
+        ("nome", "Nome"),
+        ("tipo", "Tipo")
+    ]
+
+    indices = {
+        "id": 0,
+        "nome": 1,
+        "tipo": 2
+    }
+
+    tipos = {
+        "id": "numero",
+        "nome": "texto",
+        "tipo": "texto"
+    }
+
+    campo, direcao = escolher_ordenacao(
+        modulo="categorias",
+        campos=campos_ordenacao,
+        campo_padrao="nome",
+        direcao_padrao="asc"
+    )
+
+    categorias = ordenar_registros(
+        registros=categorias,
+        campo=campo,
+        indice_campos=indices,
+        direcao=direcao,
+        tipos_campos=tipos
+    )
+
+    tabela = Table(
+        title="CATEGORIAS",
+        show_header=True,
+        header_style="bold cyan"
+    )
+
+    tabela.add_column("ID", justify="right", style="dim")
+    tabela.add_column("Nome", style="white")
+    tabela.add_column("Tipo", justify="center")
+
+    for categoria_id, nome, tipo in categorias:
+        cor_tipo = (
+            "green" if tipo == "receita" else "red"
+            if tipo == "despesa" else "white"
+        )
+
+        tabela.add_row(
+            str(categoria_id),
+            str(nome),
+            f"[{cor_tipo}]{tipo}[/{cor_tipo}]"
+        )
+
+    console.print()
+    console.print(tabela)
+    console.print(
+        f"[dim]Total de categorias: {len(categorias)}[/dim]"
+    )
+
 
 def criar_nova_categoria():
     print()
@@ -5013,18 +5373,72 @@ def excluir_cartao_menu():
         print("Não foi possível excluir o cartão.")
 
 
-def mostrar_cartoes():
-    print()
-    print("========================================")
-    print("              CARTÕES")
-    print("========================================")
-    print()
 
+def mostrar_cartoes():
     cartoes = listar_cartoes()
 
     if not cartoes:
-        print("Nenhum cartão cadastrado.")
+        console.print(
+            "\n[yellow]Nenhum cartão cadastrado.[/yellow]"
+        )
         return
+
+    campos_ordenacao = [
+        ("id", "ID"),
+        ("nome", "Nome"),
+        ("limite", "Limite total"),
+        ("dia_fechamento", "Dia de fechamento"),
+        ("dia_vencimento", "Dia de vencimento"),
+        ("ativo", "Status")
+    ]
+
+    indices = {
+        "id": 0,
+        "nome": 1,
+        "limite": 2,
+        "dia_fechamento": 3,
+        "dia_vencimento": 4,
+        "ativo": 5
+    }
+
+    tipos = {
+        "id": "numero",
+        "nome": "texto",
+        "limite": "numero",
+        "dia_fechamento": "numero",
+        "dia_vencimento": "numero",
+        "ativo": "numero"
+    }
+
+    campo, direcao = escolher_ordenacao(
+        modulo="cartoes",
+        campos=campos_ordenacao,
+        campo_padrao="id",
+        direcao_padrao="asc"
+    )
+
+    cartoes = ordenar_registros(
+        registros=cartoes,
+        campo=campo,
+        indice_campos=indices,
+        direcao=direcao,
+        tipos_campos=tipos
+    )
+
+    tabela = Table(
+        title="CARTÕES",
+        show_header=True,
+        header_style="bold cyan"
+    )
+
+    tabela.add_column("ID", justify="right", style="dim")
+    tabela.add_column("Cartão")
+    tabela.add_column("Limite total", justify="right")
+    tabela.add_column("Utilizado", justify="right")
+    tabela.add_column("Disponível", justify="right")
+    tabela.add_column("Fecha", justify="center")
+    tabela.add_column("Vence", justify="center")
+    tabela.add_column("Status", justify="center")
 
     for cartao in cartoes:
         (
@@ -5036,8 +5450,6 @@ def mostrar_cartoes():
             ativo
         ) = cartao
 
-        status = "🟢 ATIVO" if ativo else "⏸️ INATIVO"
-
         limite_utilizado = calcular_limite_utilizado(
             id_cartao
         )
@@ -5046,63 +5458,116 @@ def mostrar_cartoes():
             id_cartao
         )
 
-        print("----------------------------------------")
-        print(f"ID: {id_cartao}")
-        print(f"Cartão: {nome}")
-        print(f"Limite total:      {formatar_moeda(limite)}")
-        print(
-            f"Limite utilizado:  "
-            f"{formatar_moeda(limite_utilizado)}"
+        status = (
+            "[green]ATIVO[/green]"
+            if ativo
+            else "[red]INATIVO[/red]"
         )
-        print(
-            f"Limite disponível: "
-            f"{formatar_moeda(limite_disponivel)}"
-        )
-        print(f"Fechamento: dia {dia_fechamento:02d}")
-        print(f"Vencimento: dia {dia_vencimento:02d}")
-        print(f"Status: {status}")
 
-    print("----------------------------------------")
+        tabela.add_row(
+            str(id_cartao),
+            str(nome),
+            formatar_moeda(limite),
+            formatar_moeda(limite_utilizado),
+            formatar_moeda(limite_disponivel),
+            f"{dia_fechamento:02d}",
+            f"{dia_vencimento:02d}",
+            status
+        )
+
+    console.print()
+    console.print(tabela)
+    console.print(
+        f"[dim]Total de cartões: {len(cartoes)}[/dim]"
+    )
+
 
 def mostrar_faturas(cartao_id=None):
-    print()
-    print("========================================")
-    print("              FATURAS")
-    print("========================================")
-    print()
-
     faturas = listar_faturas(cartao_id)
 
     if not faturas:
-        print("Nenhuma fatura encontrada.")
+        console.print(
+            "\n[yellow]Nenhuma fatura encontrada.[/yellow]"
+        )
         return
 
-    print(
-        "ID | CARTÃO"
-        "        | FATURA"
-        "       | FECHAMENTO"
-        " | VENCIMENTO"
-        " | TOTAL"
-        "       | STATUS"
+    campos_ordenacao = [
+        ("id", "ID"),
+        ("cartao", "Nome do cartão"),
+        ("mes", "Mês"),
+        ("ano", "Ano"),
+        ("fechamento", "Data de fechamento"),
+        ("vencimento", "Data de vencimento"),
+        ("valor", "Valor total"),
+        ("status", "Status de pagamento")
+    ]
+
+    indices = {
+        "id": 0,
+        "cartao": 2,
+        "mes": 3,
+        "ano": 4,
+        "fechamento": 5,
+        "vencimento": 6,
+        "valor": 7,
+        "status": 8
+    }
+
+    tipos = {
+        "id": "numero",
+        "cartao": "texto",
+        "mes": "numero",
+        "ano": "numero",
+        "fechamento": "data",
+        "vencimento": "data",
+        "valor": "numero",
+        "status": "numero"
+    }
+
+    campo, direcao = escolher_ordenacao(
+        modulo="faturas",
+        campos=campos_ordenacao,
+        campo_padrao="vencimento",
+        direcao_padrao="asc"
     )
 
-    print("-" * 105)
+    faturas = ordenar_registros(
+        registros=faturas,
+        campo=campo,
+        indice_campos=indices,
+        direcao=direcao,
+        tipos_campos=tipos
+    )
 
     meses = [
         "",
-        "JANEIRO",
-        "FEVEREIRO",
-        "MARÇO",
-        "ABRIL",
-        "MAIO",
-        "JUNHO",
-        "JULHO",
-        "AGOSTO",
-        "SETEMBRO",
-        "OUTUBRO",
-        "NOVEMBRO",
-        "DEZEMBRO"
+        "Janeiro",
+        "Fevereiro",
+        "Março",
+        "Abril",
+        "Maio",
+        "Junho",
+        "Julho",
+        "Agosto",
+        "Setembro",
+        "Outubro",
+        "Novembro",
+        "Dezembro"
     ]
+
+    tabela = Table(
+        title="FATURAS",
+        show_header=True,
+        header_style="bold cyan"
+    )
+
+    tabela.add_column("ID", justify="right", style="dim")
+    tabela.add_column("Cartão")
+    tabela.add_column("Período")
+    tabela.add_column("Fechamento", justify="center")
+    tabela.add_column("Vencimento", justify="center")
+    tabela.add_column("Valor total", justify="right")
+    tabela.add_column("Status", justify="center")
 
     for fatura in faturas:
         (
@@ -5117,22 +5582,28 @@ def mostrar_faturas(cartao_id=None):
             paga
         ) = fatura
 
-        status = "🟢 PAGA" if paga else "🔴 ABERTA"
-
-        print(
-            f"{id_fatura:<2} | "
-            f"{nome_cartao:<8} | "
-            f"{meses[mes]:<10} "
-            f"{ano} | "
-            f"{formatar_data(data_fechamento)}"
-            f" | "
-            f"{formatar_data(data_vencimento)}"
-            f" | "
-            f"{formatar_moeda(valor_total):<13} | "
-            f"{status}"
+        status = (
+            "[green]PAGA[/green]"
+            if paga
+            else "[red]ABERTA[/red]"
         )
 
-    print("-" * 105)
+        tabela.add_row(
+            str(id_fatura),
+            str(nome_cartao),
+            f"{meses[mes]} / {ano}",
+            formatar_data(data_fechamento),
+            formatar_data(data_vencimento),
+            formatar_moeda(valor_total),
+            status
+        )
+
+    console.print()
+    console.print(tabela)
+    console.print(
+        f"[dim]Total de faturas: {len(faturas)}[/dim]"
+    )
+
 
 def mostrar_compras_cartao(fatura_id):
     print()

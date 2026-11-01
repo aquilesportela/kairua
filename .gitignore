@@ -18,3 +18,7 @@ __pycache__/
 # Configuracoes locais e segredos
 .env
 .env.*
+
+# Preferências locais da interface
+preferencias.json
+preferencias.json.tmp
