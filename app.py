@@ -74,6 +74,55 @@ from utils import (
 
 from datetime import datetime
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.prompt import Prompt
+
+console = Console()
+
+def exibir_menu(titulo, descricao, opcoes):
+    console.print()
+
+    console.print(
+        Panel(
+            f"[bold cyan]{titulo}[/bold cyan]\n"
+            f"[dim]{descricao}[/dim]",
+            border_style="cyan",
+            expand=False,
+            padding=(1, 4)
+        )
+    )
+
+    tabela = Table(
+        show_header=True,
+        header_style="bold cyan",
+        border_style="bright_black",
+        expand=False
+    )
+
+    tabela.add_column(
+        "Opção",
+        justify="center",
+        style="bold yellow",
+        width=7
+    )
+
+    tabela.add_column(
+        "Funcionalidade",
+        style="white",
+        min_width=25
+    )
+
+    for numero, nome in opcoes:
+        if numero == "0":
+            nome = f"[red]{nome}[/red]"
+
+        tabela.add_row(numero, nome)
+
+    console.print(tabela)
+    console.print()
+
 # ============================================================
 # INICIALIZAÇÃO
 # ============================================================
@@ -1868,23 +1917,23 @@ def excluir_recorrencia_menu():
 
 def menu_recorrencias():
     while True:
-        print()
-        print("========================================")
-        print("            RECORRÊNCIAS")
-        print("========================================")
-
-        print()
-        print("1 - Nova recorrência")
-        print("2 - Listar recorrências")
-        print("3 - Ver ocorrências")
-        print("4 - Editar recorrência")
-        print("5 - Pausar / Reativar recorrência")
-        print("6 - Excluir recorrência")
-        print("0 - Voltar")
-
-        opcao = input(
-            "Escolha uma opção: "
+        exibir_menu(
+            "RECORRÊNCIAS",
+            "Gerencie seus pagamentos e recebimentos recorrentes",
+            [
+                ("1", "Nova recorrência"),
+                ("2", "Listar recorrências"),
+                ("3", "Ver ocorrências"),
+                ("4", "Editar recorrência"),
+                ("5", "Pausar / Reativar recorrência"),
+                ("6", "Excluir recorrência"),
+                ("0", "Voltar")
+            ]
         )
+
+        opcao = Prompt.ask(
+            "[bold cyan]Escolha uma opção[/bold cyan]"
+        ).strip()
 
         if opcao == "1":
             nova_recorrencia()
@@ -1903,13 +1952,15 @@ def menu_recorrencias():
 
         elif opcao == "6":
             excluir_recorrencia_menu()
-        
+
         elif opcao == "0":
             return
 
         else:
-            print()
-            print("Opção inválida.")
+            console.print(
+                "[bold red]Opção inválida![/bold red] "
+                "Escolha uma opção disponível."
+            )
 
 def mostrar_parcelas_parcelamento():
     print()
@@ -2646,25 +2697,26 @@ def excluir_parcelamento_menu():
             "Parcelamento não encontrado."
         )
 
+
 def menu_parcelamentos():
     while True:
-        print()
-        print("========================================")
-        print("           PARCELAMENTOS")
-        print("========================================")
-
-        print()
-        print("1 - Novo parcelamento")
-        print("2 - Listar parcelamentos")
-        print("3 - Ver parcelas")
-        print("4 - Editar parcelamento")
-        print("5 - Pausar / Reativar parcelamento")
-        print("6 - Excluir parcelamento")
-        print("0 - Voltar")
-
-        opcao = input(
-            "Escolha uma opção: "
+        exibir_menu(
+            "PARCELAMENTOS",
+            "Gerencie suas compras e compromissos parcelados",
+            [
+                ("1", "Novo parcelamento"),
+                ("2", "Listar parcelamentos"),
+                ("3", "Ver parcelas"),
+                ("4", "Editar parcelamento"),
+                ("5", "Pausar / Reativar parcelamento"),
+                ("6", "Excluir parcelamento"),
+                ("0", "Voltar")
+            ]
         )
+
+        opcao = Prompt.ask(
+            "[bold cyan]Escolha uma opção[/bold cyan]"
+        ).strip()
 
         if opcao == "1":
             novo_parcelamento()
@@ -2688,8 +2740,11 @@ def menu_parcelamentos():
             return
 
         else:
-            print()
-            print("Opção inválida.")
+            console.print(
+                "[bold red]Opção inválida![/bold red] "
+                "Escolha uma opção disponível."
+            )
+
 
 def novo_parcelamento():
     print()
@@ -3286,25 +3341,26 @@ def mostrar_projecao_faturas():
                 f"{formatar_moeda(acumulado)}"
             )
 
+
 def menu_resumos():
     while True:
-        print()
-        print("========================================")
-        print("             RESUMOS")
-        print("========================================")
-
-        print()
-        print("1 - Resumo financeiro")
-        print("2 - Resumo mensal")
-        print("3 - Evolução anual")
-        print("4 - Comparar meses")
-        print("5 - Análise dos cartões")
-        print("6 - Projeção de faturas")
-        print("0 - Voltar")
-
-        opcao = input(
-            "Escolha uma opção: "
+        exibir_menu(
+            "RESUMOS",
+            "Acompanhe sua situação e evolução financeira",
+            [
+                ("1", "Resumo financeiro"),
+                ("2", "Resumo mensal"),
+                ("3", "Evolução anual"),
+                ("4", "Comparar meses"),
+                ("5", "Análise dos cartões"),
+                ("6", "Projeção de faturas"),
+                ("0", "Voltar")
+            ]
         )
+
+        opcao = Prompt.ask(
+            "[bold cyan]Escolha uma opção[/bold cyan]"
+        ).strip()
 
         if opcao == "1":
             mostrar_resumo_financeiro()
@@ -3314,7 +3370,7 @@ def menu_resumos():
 
         elif opcao == "3":
             mostrar_evolucao_anual()
-        
+
         elif opcao == "4":
             mostrar_comparacao_mensal()
 
@@ -3328,7 +3384,11 @@ def menu_resumos():
             break
 
         else:
-            print("Opção inválida.")
+            console.print(
+                "[bold red]Opção inválida![/bold red] "
+                "Escolha uma opção disponível."
+            )
+
 
 def mostrar_comparacao_mensal():
     print()
@@ -3954,23 +4014,22 @@ def mostrar_despesas_por_categoria_mes():
             )
 
 
+
 def menu_relatorios():
     while True:
-        print()
-        print("========================================")
-        print("            RELATÓRIOS")
-        print("========================================")
-
-        print()
-        print("1 - Despesas por categoria")
-        print(
-            "2 - Despesas por categoria no mês"
+        exibir_menu(
+            "RELATÓRIOS",
+            "Analise suas despesas por categoria e período",
+            [
+                ("1", "Despesas por categoria"),
+                ("2", "Despesas por categoria no mês"),
+                ("0", "Voltar")
+            ]
         )
-        print("0 - Voltar")
 
-        opcao = input(
-            "Escolha uma opção: "
-        )
+        opcao = Prompt.ask(
+            "[bold cyan]Escolha uma opção[/bold cyan]"
+        ).strip()
 
         if opcao == "1":
             mostrar_despesas_por_categoria()
@@ -3982,7 +4041,11 @@ def menu_relatorios():
             break
 
         else:
-            print("Opção inválida.")
+            console.print(
+                "[bold red]Opção inválida![/bold red] "
+                "Escolha uma opção disponível."
+            )
+
 
 
 # ============================================================
@@ -4429,23 +4492,24 @@ def nova_recorrencia():
         "como NÃO PAGA."
     )
 
+
 def menu_categorias():
     while True:
-        print()
-        print("========================================")
-        print("            CATEGORIAS")
-        print("========================================")
-
-        print()
-        print("1 - Listar categorias")
-        print("2 - Criar categoria")
-        print("3 - Editar categoria")
-        print("4 - Excluir categoria")
-        print("0 - Voltar")
-
-        opcao = input(
-            "Escolha uma opção: "
+        exibir_menu(
+            "CATEGORIAS",
+            "Organize suas receitas e despesas por categoria",
+            [
+                ("1", "Listar categorias"),
+                ("2", "Criar categoria"),
+                ("3", "Editar categoria"),
+                ("4", "Excluir categoria"),
+                ("0", "Voltar")
+            ]
         )
+
+        opcao = Prompt.ask(
+            "[bold cyan]Escolha uma opção[/bold cyan]"
+        ).strip()
 
         if opcao == "1":
             listar_todas_categorias()
@@ -4463,26 +4527,33 @@ def menu_categorias():
             break
 
         else:
-            print("Opção inválida.")
+            console.print(
+                "[bold red]Opção inválida![/bold red] "
+                "Escolha uma opção disponível."
+            )
+
 
 # ============================================================
 # MENU PRINCIPAL
 # ============================================================
 
+
 def filtrar_lancamentos():
     while True:
-        print()
-        print("========================================")
-        print("          FILTRAR LANÇAMENTOS")
-        print("========================================")
+        exibir_menu(
+            "FILTRAR LANÇAMENTOS",
+            "Consulte suas movimentações por diferentes critérios",
+            [
+                ("1", "Filtrar por tipo"),
+                ("2", "Filtrar por categoria"),
+                ("3", "Filtrar por período"),
+                ("0", "Voltar")
+            ]
+        )
 
-        print()
-        print("1 - Filtrar por tipo")
-        print("2 - Filtrar por categoria")
-        print("3 - Filtrar por período")
-        print("0 - Voltar")
-
-        opcao = input("Escolha uma opção: ").strip()
+        opcao = Prompt.ask(
+            "[bold cyan]Escolha uma opção[/bold cyan]"
+        ).strip()
 
         if opcao == "1":
             tipo = ler_tipo()
@@ -4573,30 +4644,32 @@ def filtrar_lancamentos():
             return
 
         else:
-            print()
-            print("Opção inválida.")
+            console.print(
+                "[bold red]Opção inválida![/bold red] "
+                "Escolha uma opção disponível."
+            )
 
 def menu_lancamentos():
     while True:
-        print()
-        print("========================================")
-        print("              LANÇAMENTOS")
-        print("========================================")
-
-        print()
-        print("1 - Novo lançamento")
-        print("2 - Listar lançamentos")
-        print("3 - Filtrar lançamentos")
-        print("4 - Editar lançamento")
-        print("5 - Excluir lançamento")
-        print("6 - Recorrências")
-        print("7 - Parcelamentos")
-        print("0 - Voltar")
+        exibir_menu(
+            "LANÇAMENTOS",
+            "Gerencie suas receitas e despesas",
+            [
+                ("1", "Novo lançamento"),
+                ("2", "Listar lançamentos"),
+                ("3", "Filtrar lançamentos"),
+                ("4", "Editar lançamento"),
+                ("5", "Excluir lançamento"),
+                ("6", "Recorrências"),
+                ("7", "Parcelamentos"),
+                ("0", "Voltar")
+            ]
+        )
 
         opcao = input("Escolha uma opção: ").strip()
 
         if opcao == "1":
-            novo_lancamento()
+            adicionar_novo_lancamento()
 
         elif opcao == "2":
             mostrar_lancamentos()
@@ -5370,19 +5443,22 @@ def pagar_fatura_menu():
 
 def menu_faturas():
     while True:
-        print()
-        print("========================================")
-        print("              FATURAS")
-        print("========================================")
+        exibir_menu(
+            "FATURAS",
+            "Consulte, acompanhe e pague suas faturas",
+            [
+                ("1", "Listar todas"),
+                ("2", "Faturas de um cartão"),
+                ("3", "Ver compras de uma fatura"),
+                ("4", "Pagar fatura"),
+                ("0", "Voltar")
+            ]
+        )
 
-        print()
-        print("1 - Listar todas")
-        print("2 - Faturas de um cartão")
-        print("3 - Ver compras de uma fatura")
-        print("4 - Pagar fatura")
-        print("0 - Voltar")
+        opcao = Prompt.ask(
+            "[bold cyan]Escolha uma opção[/bold cyan]"
+        ).strip()
 
-        opcao = input("Escolha uma opção: ").strip()
 
         if opcao == "1":
             mostrar_faturas()
@@ -5442,26 +5518,32 @@ def menu_faturas():
             return
 
         else:
-            print()
-            print("Opção inválida.")
+            console.print(
+                "[bold red]Opção inválida![/bold red] "
+                "Escolha uma opção disponível."
+            )
+
 
 def menu_cartoes():
     while True:
-        print()
-        print("========================================")
-        print("              CARTÕES")
-        print("========================================")
+        exibir_menu(
+            "CARTÕES",
+            "Gerencie seus cartões de crédito, compras e faturas",
+            [
+                ("1", "Novo cartão"),
+                ("2", "Listar cartões"),
+                ("3", "Faturas"),
+                ("4", "Nova compra"),
+                ("5", "Editar cartão"),
+                ("6", "Ativar / Desativar cartão"),
+                ("7", "Excluir cartão"),
+                ("0", "Voltar")
+            ]
+        )
 
-        print("1 - Novo cartão")
-        print("2 - Listar cartões")
-        print("3 - Faturas")
-        print("4 - Nova compra")
-        print("5 - Editar cartão")
-        print("6 - Ativar/Desativar cartão")
-        print("7 - Excluir cartão")
-        print("0 - Voltar")
-
-        opcao = input("Escolha uma opção: ").strip()
+        opcao = Prompt.ask(
+            "[bold cyan]Escolha uma opção[/bold cyan]"
+        ).strip()
 
         if opcao == "1":
             novo_cartao()
@@ -5478,37 +5560,40 @@ def menu_cartoes():
         elif opcao == "5":
             editar_cartao()
 
-        elif opcao == "6": 
-            alterar_status_cartao_menu()    
-            
+        elif opcao == "6":
+            alterar_status_cartao_menu()
+
         elif opcao == "7":
-            excluir_cartao_menu() 
+            excluir_cartao_menu()
 
         elif opcao == "0":
             return
 
         else:
-            print()
-            print("Opção inválida.")
+            console.print(
+                "[bold red]Opção inválida![/bold red] "
+                "Escolha uma opção disponível."
+            )
+
 
 def menu_principal():
     while True:
-        print()
-        print("========================================")
-        print("          FINANCEIRO PESSOAL")
-        print("========================================")
-
-        print()
-        print("1 - Lançamentos")
-        print("2 - Resumos")
-        print("3 - Relatórios")
-        print("4 - Categorias")
-        print("5 - Cartões")
-        print("0 - Sair")
-
-        opcao = input(
-            "Escolha uma opção: "
+        exibir_menu(
+            "FINANCEIRO PESSOAL",
+            "Sistema de controle financeiro",
+            [
+                ("1", "Lançamentos"),
+                ("2", "Resumos"),
+                ("3", "Relatórios"),
+                ("4", "Categorias"),
+                ("5", "Cartões"),
+                ("0", "Sair")
+            ]
         )
+
+        opcao = Prompt.ask(
+            "[bold cyan]Escolha uma opção[/bold cyan]"
+        ).strip()
 
         if opcao == "1":
             menu_lancamentos()
@@ -5523,24 +5608,26 @@ def menu_principal():
             menu_categorias()
 
         elif opcao == "5":
-            menu_cartoes()    
+            menu_cartoes()
 
         elif opcao == "0":
-            print()
-            print("Encerrando sistema...")
+            console.print(
+                "\n[bold green]"
+                "Sistema encerrado. Até logo!"
+                "[/bold green]"
+            )
             break
 
         else:
-            print()
-            print("Opção inválida!")
+            console.print(
+                "[bold red]Opção inválida![/bold red] "
+                "Escolha uma opção disponível."
+            )
 
 
 # ============================================================
 # EXECUÇÃO
 # ============================================================
 
-print("========================================")
-print("          FINANCEIRO PESSOAL")
-print("========================================")
-
-menu_principal()
+if __name__ == "__main__":
+    menu_principal()
