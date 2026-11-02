@@ -76,7 +76,7 @@ from utils import (
 )
 
 from datetime import datetime
-
+from datetime import timedelta
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -252,12 +252,12 @@ def mostrar_lancamento(lancamento):
     )
 
 
-def mostrar_lancamentos():
+def mostrar_lancamentos(lancamentos=None, titulo="LISTA DE LANÇAMENTOS"):
     console.print()
 
     console.print(
         Panel(
-            "[bold cyan]LISTA DE LANÇAMENTOS[/bold cyan]\n"
+            f"[bold cyan]{titulo}[/bold cyan]\n"
             "[dim]Consulte suas receitas e despesas registradas[/dim]",
             border_style="cyan",
             expand=False,
@@ -265,7 +265,8 @@ def mostrar_lancamentos():
         )
     )
 
-    lancamentos = listar_lancamentos()
+    if lancamentos is None:
+        lancamentos = listar_lancamentos()
 
     if not lancamentos:
         console.print(
@@ -740,8 +741,7 @@ def filtrar_combinado():
             proximo_mes = mes + 1
 
         data_fim = (
-            f"{proximo_ano:04d}-"
-            f"{proximo_mes:02d}-01"
+            f"{proximo_ano:04d}-{proximo_mes:02d}-01"
         )
 
     elif periodo != "1":
@@ -842,17 +842,10 @@ def filtrar_combinado():
         categoria_id=categoria_id
     )
 
-    print()
-    print("========================================")
-    print("          RESULTADO DO FILTRO")
-    print("========================================")
-
-    if not lancamentos:
-        print("Nenhum lançamento encontrado.")
-
-    else:
-        for lancamento in lancamentos:
-            mostrar_lancamento(lancamento)
+    mostrar_lancamentos(
+    lancamentos=lancamentos,
+    titulo="RESULTADO DO FILTRO COMBINADO"
+    )
 
 
 def menu_filtros():
@@ -3306,79 +3299,99 @@ def mostrar_resumo_financeiro():
     print("          DASHBOARD FINANCEIRO")
     print("========================================")
 
-    print()
-    print("MOVIMENTAÇÃO FINANCEIRA")
-    print("----------------------------------------")
+    saldo = dashboard["saldo"]
+    cor_saldo = "green" if saldo >= 0 else "red"
 
-    print(
-        f"Receitas: "
-        f"{formatar_moeda(dashboard['receitas'])}"
+    movimentacao = Table.grid(padding=(0, 2))
+    movimentacao.add_column(style="bold")
+    movimentacao.add_column(justify="right")
+
+    movimentacao.add_row(
+        "Receitas",
+        f"[green]{formatar_moeda(dashboard['receitas'])}[/green]"
+    )
+    movimentacao.add_row(
+        "Despesas",
+        f"[red]{formatar_moeda(dashboard['despesas'])}[/red]"
+    )
+    movimentacao.add_row(
+        "Saldo",
+        f"[bold {cor_saldo}]{formatar_moeda(saldo)}[/bold {cor_saldo}]"
     )
 
-    print(
-        f"Despesas: "
-        f"{formatar_moeda(dashboard['despesas'])}"
+    console.print(
+        Panel(
+            movimentacao,
+            title="MOVIMENTAÇÃO FINANCEIRA",
+            border_style="cyan",
+            expand=False
+        )
     )
 
-    print(
-        f"Saldo:    "
-        f"{formatar_moeda(dashboard['saldo'])}"
+    cartoes = Table.grid(padding=(0, 2))
+    cartoes.add_column(style="bold")
+    cartoes.add_column(justify="right")
+
+    cartoes.add_row(
+        "Cartões ativos",
+        str(dashboard["quantidade_cartoes_ativos"])
     )
-
-    print()
-    print("CARTÕES")
-    print("----------------------------------------")
-
-    print(
-        f"Cartões ativos:    "
-        f"{dashboard['quantidade_cartoes_ativos']}"
+    cartoes.add_row(
+        "Limite total",
+        formatar_moeda(dashboard["limite_total"])
     )
-
-    print(
-        f"Limite total:      "
-        f"{formatar_moeda(dashboard['limite_total'])}"
+    cartoes.add_row(
+        "Limite utilizado",
+        formatar_moeda(dashboard["limite_utilizado"])
     )
-
-    print(
-        f"Limite utilizado:  "
-        f"{formatar_moeda(dashboard['limite_utilizado'])}"
+    cartoes.add_row(
+        "Limite disponível",
+        formatar_moeda(dashboard["limite_disponivel"])
     )
-
-    print(
-        f"Limite disponível: "
-        f"{formatar_moeda(dashboard['limite_disponivel'])}"
-    )
-
-    print(
-        f"Utilização:        "
+    cartoes.add_row(
+        "Utilização",
         f"{dashboard['percentual_limite_utilizado']:.1f}%"
     )
 
-    print()
-    print("COMPROMISSOS")
-    print("----------------------------------------")
-
-    print(
-        f"Faturas abertas:      "
-        f"{dashboard['quantidade_faturas_abertas']}"
+    console.print(
+        Panel(
+            cartoes,
+            title="CARTÕES",
+            border_style="blue",
+            expand=False
+        )
     )
 
-    print(
-        f"Valor das faturas:    "
-        f"{formatar_moeda(dashboard['faturas_abertas'])}"
+    compromissos = Table.grid(padding=(0, 2))
+    compromissos.add_column(style="bold")
+    compromissos.add_column(justify="right")
+
+    compromissos.add_row(
+        "Faturas abertas",
+        str(dashboard["quantidade_faturas_abertas"])
+    )
+    compromissos.add_row(
+        "Valor das faturas",
+        formatar_moeda(dashboard["faturas_abertas"])
+    )
+    compromissos.add_row(
+        "Recorrências abertas",
+        formatar_moeda(dashboard["recorrencias_abertas"])
+    )
+    compromissos.add_row(
+        "Parcelamentos abertos",
+        formatar_moeda(dashboard["parcelamentos_abertos"])
     )
 
-    print(
-        f"Recorrências abertas: "
-        f"{formatar_moeda(dashboard['recorrencias_abertas'])}"
+    console.print(
+        Panel(
+            compromissos,
+            title="COMPROMISSOS",
+            border_style="yellow",
+            expand=False
+        )
     )
 
-    print(
-        f"Parcelamentos abertos:"
-        f" {formatar_moeda(dashboard['parcelamentos_abertos'])}"
-    )
-
-    print("========================================")
 
 
 def mostrar_resumo_mensal():
@@ -3414,144 +3427,216 @@ def mostrar_resumo_mensal():
         mes
     )
 
-    print()
-    print(
-        f"PERÍODO: {mes:02d}/{ano}"
+    console.print()
+
+    console.print(
+        Panel(
+            f"[bold cyan]RESUMO MENSAL — {mes:02d}/{ano}[/bold cyan]\n"
+            "[dim]Visão detalhada das suas finanças[/dim]",
+            border_style="cyan",
+            expand=False,
+            padding=(1, 3)
+        )
     )
 
-    print("----------------------------------------")
-    print("MOVIMENTAÇÃO")
-    print("----------------------------------------")
+    # MOVIMENTAÇÃO FINANCEIRA
+    saldo = resumo["saldo"]
+    cor_saldo = "green" if saldo >= 0 else "red"
 
-    print(
-        f"Receitas: "
-        f"{formatar_moeda(resumo['receitas'])}"
+    movimentacao = Table.grid(padding=(0, 3))
+    movimentacao.add_column(style="bold")
+    movimentacao.add_column(justify="right")
+
+    movimentacao.add_row(
+        "Receitas",
+        f"[green]{formatar_moeda(resumo['receitas'])}[/green]"
+    )
+    movimentacao.add_row(
+        "Despesas",
+        f"[red]{formatar_moeda(resumo['despesas'])}[/red]"
+    )
+    movimentacao.add_row(
+        "Saldo",
+        f"[bold {cor_saldo}]{formatar_moeda(saldo)}[/bold {cor_saldo}]"
     )
 
-    print(
-        f"Despesas: "
-        f"{formatar_moeda(resumo['despesas'])}"
+    console.print(
+        Panel(
+            movimentacao,
+            title="MOVIMENTAÇÃO",
+            border_style="cyan",
+            expand=False
+        )
     )
 
-    print(
-        f"Saldo:    "
-        f"{formatar_moeda(resumo['saldo'])}"
+    # LANÇAMENTOS
+    lancamentos = Table.grid(padding=(0, 3))
+    lancamentos.add_column(style="bold")
+    lancamentos.add_column(justify="right")
+
+    lancamentos.add_row(
+        "Receitas lançadas",
+        str(resumo["quantidade_receitas"])
+    )
+    lancamentos.add_row(
+        "Despesas lançadas",
+        str(resumo["quantidade_despesas"])
     )
 
-    print()
-    print("LANÇAMENTOS")
-    print("----------------------------------------")
-
-    print(
-        f"Receitas lançadas: "
-        f"{resumo['quantidade_receitas']}"
+    console.print(
+        Panel(
+            lancamentos,
+            title="LANÇAMENTOS",
+            border_style="blue",
+            expand=False
+        )
     )
 
-    print(
-        f"Despesas lançadas: "
-        f"{resumo['quantidade_despesas']}"
-    )
-
-    print()
-    print("DESTAQUES")
-    print("----------------------------------------")
+    # DESTAQUES
+    destaques = Table.grid(padding=(0, 3))
+    destaques.add_column(style="bold")
+    destaques.add_column(justify="right")
 
     if resumo["maior_categoria"]:
-
-        print(
-            f"Maior categoria: "
-            f"{resumo['maior_categoria']}"
+        destaques.add_row(
+            "Maior categoria",
+            str(resumo["maior_categoria"])
         )
-
-        print(
-            f"Total: "
-            f"{formatar_moeda(resumo['maior_categoria_valor'])}"
+        destaques.add_row(
+            "Total",
+            formatar_moeda(resumo["maior_categoria_valor"])
         )
-
     else:
-        print(
-            "Nenhuma despesa encontrada."
+        destaques.add_row(
+            "Despesas",
+            "Nenhuma despesa encontrada"
         )
 
-    print()
-    print("CARTÃO DE CRÉDITO")
-    print("----------------------------------------")
-
-    print(
-        f"Gastos no cartão: "
-        f"{formatar_moeda(resumo['gastos_cartao'])}"
-    )
-    
-    print(
-        f"Faturas do mês (fechamento): "
-        f"{formatar_moeda(resumo['valor_faturas_mes'])}"
-    )
-
-    print("----------------------------------------")
-
-    print()
-    print("DESPESAS POR CATEGORIA")
-    print("----------------------------------------")
-
-    categorias = despesas_por_categoria_mensal(
-        ano,
-        mes
-    )
-
-    if not categorias:
-        print(
-            "Nenhuma despesa encontrada."
+    console.print(
+        Panel(
+            destaques,
+            title="DESTAQUES",
+            border_style="yellow",
+            expand=False
         )
+    )
 
-    else:
+    # CARTÃO DE CRÉDITO
+    cartoes = Table.grid(padding=(0, 3))
+    cartoes.add_column(style="bold")
+    cartoes.add_column(justify="right")
+
+    cartoes.add_row(
+        "Gastos no cartão",
+        formatar_moeda(resumo["gastos_cartao"])
+    )
+    cartoes.add_row(
+        "Faturas do mês (fechamento)",
+        formatar_moeda(resumo["valor_faturas_mes"])
+    )
+
+    console.print(
+        Panel(
+            cartoes,
+            title="CARTÃO DE CRÉDITO",
+            border_style="magenta",
+            expand=False
+        )
+    )
+
+    # DESPESAS POR CATEGORIA
+    categorias = despesas_por_categoria_mensal(ano, mes)
+
+    tabela_categorias = Table(
+        show_header=True,
+        header_style="bold cyan",
+        border_style="bright_black",
+        expand=False
+    )
+
+    tabela_categorias.add_column("Categoria")
+    tabela_categorias.add_column(
+        "Total",
+        justify="right"
+    )
+
+    if categorias:
         for categoria, total in categorias:
-            print(
-                f"{categoria}: "
-                f"{formatar_moeda(total)}"
+            tabela_categorias.add_row(
+                str(categoria),
+                formatar_moeda(total)
             )
-    print()
-    print("GRÁFICO — DESPESAS POR CATEGORIA")
-    print("----------------------------------------")
 
-    if not categorias:
-        print("Não há despesas para representar.")
-
-    else:
-        maior_valor = max(
-            total
-            for _, total in categorias
+        console.print(
+            Panel(
+                tabela_categorias,
+                title="DESPESAS POR CATEGORIA",
+                border_style="cyan",
+                expand=False
+            )
         )
 
+        # GRÁFICO DE BARRAS
         total_despesas = sum(
-            total
-            for _, total in categorias
+            total for _, total in categorias
         )
 
-        tamanho_maximo = 30
+        maior_valor = max(
+            total for _, total in categorias
+        )
+
+        grafico = Table(
+            show_header=True,
+            header_style="bold cyan",
+            border_style="bright_black",
+            expand=False
+        )
+
+        grafico.add_column("Categoria")
+        grafico.add_column("Distribuição")
+        grafico.add_column("Valor", justify="right")
+        grafico.add_column("%", justify="right")
 
         for categoria, total in categorias:
-
-            barra = int(
-                (total / maior_valor)
-                * tamanho_maximo
+            tamanho = (
+                int((total / maior_valor) * 25)
+                if maior_valor > 0
+                else 0
             )
 
             percentual = (
                 (total / total_despesas) * 100
+                if total_despesas > 0
+                else 0
             )
 
-            print()
-            print(categoria)
+            barra = "█" * tamanho
 
-            print(
-                f"  |"
-                f"{'█' * barra}"
-                f" {formatar_moeda(total)}"
-                f" ({percentual:.1f}%)"
+            grafico.add_row(
+                str(categoria),
+                f"[cyan]{barra}[/cyan]",
+                formatar_moeda(total),
+                f"{percentual:.1f}%"
             )
 
-    print()
-    print("========================================")
+        console.print(
+            Panel(
+                grafico,
+                title="GRÁFICO — DESPESAS POR CATEGORIA",
+                border_style="cyan",
+                expand=False
+            )
+        )
+
+    else:
+        console.print(
+            Panel(
+                "[yellow]Nenhuma despesa encontrada no período.[/yellow]",
+                title="DESPESAS POR CATEGORIA",
+                border_style="yellow",
+                expand=False
+            )
+        )
 
 def mostrar_projecao_faturas():
     print()
@@ -4907,6 +4992,7 @@ def filtrar_lancamentos():
                 ("1", "Filtrar por tipo"),
                 ("2", "Filtrar por categoria"),
                 ("3", "Filtrar por período"),
+                ("4", "Combinar Filtros"),
                 ("0", "Voltar")
             ]
         )
@@ -4927,12 +5013,10 @@ def filtrar_lancamentos():
             print(f"      LANÇAMENTOS - {tipo.upper()}")
             print("========================================")
 
-            if not lancamentos:
-                print("Nenhum lançamento encontrado.")
-            else:
-                print()
-                for lancamento in lancamentos:
-                    mostrar_lancamento(lancamento)
+            mostrar_lancamentos(
+                lancamentos=lancamentos,
+                titulo=f"LANÇAMENTOS — {tipo.upper()}"
+            )
 
         elif opcao == "2":
             print()
@@ -4967,12 +5051,10 @@ def filtrar_lancamentos():
             print("      LANÇAMENTOS DA CATEGORIA")
             print("========================================")
 
-            if not lancamentos:
-                print("Nenhum lançamento encontrado.")
-            else:
-                print()
-                for lancamento in lancamentos:
-                    mostrar_lancamento(lancamento)
+            mostrar_lancamentos(
+                lancamentos=lancamentos,
+                titulo="LANÇAMENTOS DA CATEGORIA"
+            )
 
         elif opcao == "3":
             print()
@@ -4983,22 +5065,23 @@ def filtrar_lancamentos():
             print("Data final:")
             data_fim = ler_data()
 
+            data_fim_exclusiva = (
+               datetime.strptime(data_fim, "%Y-%m-%d")
+               + timedelta(days=1)
+            ).strftime("%Y-%m-%d")
+
             lancamentos = listar_lancamentos(
                 data_inicio=data_inicio,
-                data_fim=data_fim
+                data_fim=data_fim_exclusiva
             )
 
-            print()
-            print("========================================")
-            print("       LANÇAMENTOS DO PERÍODO")
-            print("========================================")
+            mostrar_lancamentos(
+                lancamentos=lancamentos,
+                titulo="LANÇAMENTOS DO PERÍODO"
+            )
 
-            if not lancamentos:
-                print("Nenhum lançamento encontrado.")
-            else:
-                print()
-                for lancamento in lancamentos:
-                    mostrar_lancamento(lancamento)
+        elif opcao == "4":
+            filtrar_combinado()
 
         elif opcao == "0":
             return
@@ -5983,7 +6066,7 @@ def menu_faturas():
             mostrar_compras_cartao(fatura_id)
 
         elif opcao == "4":
-              pagar_fatura_menu()    
+              pagar_fatura_menu()
 
         elif opcao == "0":
             return
