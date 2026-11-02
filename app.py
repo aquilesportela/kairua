@@ -488,199 +488,12 @@ def adicionar_novo_lancamento():
     )
 
 
-def listar_todos_lancamentos():
-    print()
-    print("========================================")
-    print("          MEUS LANÇAMENTOS")
-    print("========================================")
-
-    lancamentos = listar_lancamentos()
-
-    if not lancamentos:
-        print("Nenhum lançamento cadastrado.")
-
-    else:
-        for lancamento in lancamentos:
-            mostrar_lancamento(lancamento)
 
 
-def filtrar_por_periodo():
-    while True:
-        try:
-            ano = int(
-                input("Ano: ")
-            )
-
-            mes = int(
-                input("Mês (1-12): ")
-            )
-
-            if 1 <= mes <= 12:
-                break
-
-            print(
-                "O mês deve estar entre 1 e 12."
-            )
-
-        except ValueError:
-            print(
-                "Digite números válidos."
-            )
-
-    inicio = (
-        f"{ano:04d}-{mes:02d}-01"
-    )
-
-    if mes == 12:
-        proximo_ano = ano + 1
-        proximo_mes = 1
-
-    else:
-        proximo_ano = ano
-        proximo_mes = mes + 1
-
-    fim = (
-        f"{proximo_ano:04d}-"
-        f"{proximo_mes:02d}-01"
-    )
-
-    lancamentos = listar_lancamentos(
-        data_inicio=inicio,
-        data_fim=fim
-    )
-
-    print()
-    print("========================================")
-    print(
-        f"       LANÇAMENTOS — {mes:02d}/{ano}"
-    )
-    print("========================================")
-
-    if not lancamentos:
-        print("Nenhum lançamento encontrado.")
-
-    else:
-        for lancamento in lancamentos:
-            mostrar_lancamento(lancamento)
 
 
-def filtrar_por_tipo():
-    print()
-    print("TIPO DE LANÇAMENTO")
-    print("1 - Receitas")
-    print("2 - Despesas")
-
-    tipo_opcao = input(
-        "Escolha uma opção: "
-    )
-
-    if tipo_opcao == "1":
-        tipo = "receita"
-
-    elif tipo_opcao == "2":
-        tipo = "despesa"
-
-    else:
-        print("Opção inválida.")
-        return
-
-    lancamentos = listar_lancamentos(
-        tipo=tipo
-    )
-
-    print()
-    print("========================================")
-
-    if tipo == "receita":
-        print("             RECEITAS")
-
-    else:
-        print("             DESPESAS")
-
-    print("========================================")
-
-    if not lancamentos:
-        print("Nenhum lançamento encontrado.")
-
-    else:
-        for lancamento in lancamentos:
-            (
-                id_lancamento,
-                data,
-                descricao,
-                tipo_lancamento,
-                categoria,
-                valor
-            ) = lancamento
-
-            print(
-                f"{formatar_data(data)} | "
-                f"{descricao} | "
-                f"{categoria} | "
-                f"{formatar_moeda(valor)}"
-            )
 
 
-def filtrar_por_categoria():
-    print()
-    print("CATEGORIAS")
-
-    categorias = listar_categorias()
-
-    for numero, categoria in enumerate(
-        categorias,
-        start=1
-    ):
-        categoria_id, nome, tipo = categoria
-
-        print(
-            f"{numero} - "
-            f"{nome} ({tipo})"
-        )
-
-    while True:
-        try:
-            escolha = int(
-                input(
-                    "Escolha uma categoria: "
-                )
-            )
-
-            if 1 <= escolha <= len(categorias):
-                categoria_id = categorias[
-                    escolha - 1
-                ][0]
-
-                nome_categoria = categorias[
-                    escolha - 1
-                ][1]
-
-                break
-
-            print("Categoria inválida.")
-
-        except ValueError:
-            print(
-                "Digite um número válido."
-            )
-
-    lancamentos = listar_lancamentos(
-        categoria_id=categoria_id
-    )
-
-    print()
-    print("========================================")
-    print(
-        f"      CATEGORIA: {nome_categoria}"
-    )
-    print("========================================")
-
-    if not lancamentos:
-        print("Nenhum lançamento encontrado.")
-
-    else:
-        for lancamento in lancamentos:
-            mostrar_lancamento(lancamento)
 
 
 def filtrar_combinado():
@@ -848,41 +661,6 @@ def filtrar_combinado():
     )
 
 
-def menu_filtros():
-    while True:
-        print()
-        print("========================================")
-        print("       FILTRAR LANÇAMENTOS")
-        print("========================================")
-
-        print()
-        print("1 - Filtrar por período")
-        print("2 - Filtrar por tipo")
-        print("3 - Filtrar por categoria")
-        print("4 - Combinar filtros")
-        print("0 - Voltar")
-
-        opcao = input(
-            "Escolha uma opção: "
-        )
-
-        if opcao == "1":
-            filtrar_por_periodo()
-
-        elif opcao == "2":
-            filtrar_por_tipo()
-
-        elif opcao == "3":
-            filtrar_por_categoria()
-
-        elif opcao == "4":
-            filtrar_combinado()
-
-        elif opcao == "0":
-            break
-
-        else:
-            print("Opção inválida.")
 
 
 def editar_lancamento():
@@ -5121,7 +4899,7 @@ def menu_lancamentos():
             filtrar_lancamentos()
 
         elif opcao == "4":
-            editar_lancamento_menu()
+            editar_lancamento()
 
         elif opcao == "5":
             excluir_lancamento_menu()
