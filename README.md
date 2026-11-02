@@ -1,86 +1,181 @@
-# Sistema Financeiro Pessoal
+# Kairuá
 
-Aplicação de gerenciamento financeiro pessoal desenvolvida em **Python**, com banco de dados **SQLite** e interface de linha de comando aprimorada com a biblioteca **Rich**.
+**Suas finanças, no tempo certo.**
 
-O projeto foi desenvolvido para organizar informações financeiras em um único sistema, permitindo gerenciar lançamentos, categorias, cartões de crédito, faturas, parcelamentos e recorrências.
+Sistema de gestão financeira pessoal desenvolvido em **Python**, com persistência de dados em **SQLite** e interface de terminal aprimorada com **Rich**.
+
+O Kairuá nasceu como um projeto pessoal de desenvolvimento de software, com o objetivo de centralizar o gerenciamento de receitas, despesas, cartões de crédito, faturas, parcelamentos e compromissos recorrentes.
+
+O nome é inspirado no conceito grego de *kairós*, associado ao momento oportuno, combinado com uma sonoridade brasileira.
+
+> **Status:** Em desenvolvimento ativo. O projeto funciona por meio de uma interface de linha de comando (CLI) e está passando por melhorias de usabilidade, organização e apresentação dos dados.
 
 ## Funcionalidades
 
-- Cadastro e gerenciamento de receitas e despesas.
-- Organização de lançamentos por categorias.
-- Gerenciamento de cartões de crédito.
-- Controle de faturas, compras e parcelamentos.
-- Cadastro e acompanhamento de despesas e receitas recorrentes.
-- Relatórios e resumos financeiros.
-- Filtros de lançamentos por período e categoria.
-- Ordenação de registros por diferentes critérios.
-- Persistência local das preferências de ordenação.
+### Gestão de lançamentos
+- Cadastro de receitas e despesas.
+- Organização por categorias.
+- Consulta e filtragem por período e categoria.
+- Ordenação por diferentes critérios.
 
-## Tecnologias
+### Cartões de crédito
+- Cadastro e gerenciamento de cartões.
+- Acompanhamento de limites.
+- Registro de compras.
+- Controle de faturas e vencimentos.
+- Compras parceladas.
 
-| Tecnologia | Utilização |
+### Parcelamentos e recorrências
+- Cadastro de compromissos parcelados.
+- Acompanhamento do progresso dos pagamentos.
+- Gerenciamento de receitas e despesas recorrentes.
+- Controle de status e ocorrências.
+
+### Relatórios e resumos
+- Resumo financeiro geral e mensal.
+- Consultas de lançamentos e compromissos.
+- Relatórios por categoria e período.
+- Exportação de informações em CSV.
+
+### Experiência de uso
+- Menus interativos no terminal.
+- Tabelas formatadas com Rich.
+- Ordenação por campos numéricos, textuais e datas.
+- Preferências de ordenação armazenadas localmente.
+
+## Tecnologias utilizadas
+
+| Tecnologia | Finalidade |
 |---|---|
-| Python | Desenvolvimento da aplicação |
-| SQLite | Persistência dos dados financeiros |
-| Rich | Formatação de menus e tabelas no terminal |
-| Git | Controle de versões |
+| Python | Linguagem principal |
+| SQLite | Banco de dados relacional local |
+| Rich | Interface e apresentação no terminal |
+| Git | Versionamento do código |
+| GitHub | Hospedagem do repositório |
 
-## Como executar
+## Estrutura do projeto
 
-**Pré-requisitos:** Python 3 e pip.
-
-Clone o repositório:
-
-```bash
-git clone https://github.com/SEU-USUARIO/sistema-financeiro-pessoal.git
-cd sistema-financeiro-pessoal
+```text
+kairua/
+├── app.py
+├── banco.py
+├── utils.py
+├── auditoria_financeira.py
+├── auditoria_parcelas.py
+├── auditoria_composicao.py
+├── corrigir_vencimentos.py
+├── requirements.txt
+├── .gitignore
+└── README.md
 ```
 
-Crie o ambiente virtual:
+**Arquivos principais:**
+
+- `app.py`: menus, interface e operações do sistema.
+- `banco.py`: operações e estruturas do banco de dados.
+- `utils.py`: funções auxiliares, formatação e ordenação.
+
+Os demais scripts são ferramentas auxiliares de auditoria e manutenção desenvolvidas durante a evolução do projeto.
+
+## Instalação e execução
+
+### Pré-requisitos
+
+- Python 3
+- pip
+- Git
+
+### 1. Clonar o repositório
+
+```bash
+git clone https://github.com/aquilesportela/kairua.git
+cd kairua
+```
+
+### 2. Criar um ambiente virtual
 
 ```bash
 python -m venv .venv
 ```
 
-Ative o ambiente virtual no Windows (PowerShell):
+### 3. Ativar o ambiente virtual
+
+No Windows, utilizando PowerShell:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-Instale as dependências:
+### 4. Instalar as dependências
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Inicie o aplicativo:
+### 5. Executar o sistema
 
 ```bash
 python app.py
 ```
 
-O projeto possui rotinas de criação das tabelas SQLite durante a inicialização. A instalação em um ambiente totalmente novo ainda está em validação.
+O aplicativo possui rotinas de criação das tabelas SQLite durante a inicialização.
+
+**Nota:** a instalação em um ambiente totalmente novo ainda está em validação. Recomenda-se utilizar dados de teste ao experimentar o sistema.
+
+
+## Demonstração
+
+As imagens apresentam a interface atual do Kairuá, utilizando
+um ambiente isolado com dados fictícios.
+
+### Menu principal
+
+![Menu principal do Kairuá](docs/images/menu-principal.png)
+
+### Controle de lançamentos
+
+![Listagem de lançamentos](docs/images/lancamentos.png)
+
+### Gerenciamento de cartões
+
+![Controle de cartões](docs/images/cartoes.png)
 
 ## Privacidade e armazenamento
 
-Os dados financeiros são armazenados localmente em arquivos SQLite.
+O Kairuá utiliza armazenamento local em SQLite.
 
-O repositório não deve incluir bancos de dados pessoais, backups, arquivos de configuração privada ou ambientes virtuais. Esses arquivos são excluídos do versionamento por meio do `.gitignore`.
+Arquivos de banco de dados, backups, preferências locais e ambientes virtuais são excluídos do versionamento por meio do `.gitignore`.
 
-## Status do projeto
+O repositório disponibiliza o código-fonte, não os registros financeiros pessoais utilizados durante o desenvolvimento.
 
-**Em desenvolvimento ativo.**
+## Roadmap
 
-A aplicação possui os principais módulos de gerenciamento financeiro implementados. A modernização das listagens, relatórios e resumos está em andamento.
+- [x] Implementar gerenciamento de lançamentos e categorias.
+- [x] Implementar cartões de crédito e faturas.
+- [x] Implementar parcelamentos e recorrências.
+- [x] Adicionar menus e tabelas com Rich.
+- [x] Implementar preferências persistentes de ordenação.
+- [ ] Concluir a modernização das listagens e relatórios.
+- [ ] Aprimorar dashboards e indicadores financeiros.
+- [ ] Validar a instalação em ambiente limpo.
+- [ ] Expandir os testes automatizados.
+- [ ] Adicionar capturas de tela e demonstrações.
 
-## Melhorias planejadas
+## Objetivo do projeto
 
-- Finalizar a padronização visual das listagens.
-- Aprimorar dashboards e indicadores financeiros.
-- Expandir os testes automatizados.
-- Melhorar a documentação técnica e a experiência de instalação.
+O Kairuá também funciona como um projeto de portfólio, demonstrando a aplicação prática de conceitos de:
+
+- Programação em Python.
+- Modelagem e manipulação de bancos de dados relacionais.
+- Organização e manutenção de código.
+- Implementação de regras de negócio.
+- Versionamento com Git.
+- Evolução incremental de software.
 
 ## Autor
 
-Projeto pessoal desenvolvido para aplicar conhecimentos de programação, banco de dados e engenharia de software.
+Desenvolvido por [Aquiles Portela](https://github.com/aquilesportela).
+
+---
+
+*Kairuá — Suas finanças, no tempo certo.*
