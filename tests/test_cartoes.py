@@ -921,6 +921,221 @@ class TestCriacaoFaturas(unittest.TestCase):
             4000.00
         )
 
+    def test_parcelamento_fim_mes_ano_bissexto(self):
+        banco.criar_categorias()
+        banco.criar_compras_cartao()
+        banco.criar_parcelas_cartao()
+
+        categoria_id = next(
+            categoria[0]
+            for categoria in banco.listar_categorias("despesa")
+            if categoria[1] == "Alimentação"
+        )
+
+        resultado = banco.adicionar_compra_parcelada_cartao(
+            self.cartao_id,
+            categoria_id,
+            "Compra no fim do mes",
+            "2028-01-31",
+            400.00,
+            4
+        )
+
+        self.assertTrue(resultado[0])
+        compra_id, quantidade = resultado[1]
+
+        self.assertEqual(quantidade, 4)
+
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            parcelas = conexao.execute(
+                """
+                SELECT
+                    pc.numero_parcela,
+                    pc.valor,
+                    f.ano,
+                    f.mes,
+                    f.data_fechamento,
+                    f.data_vencimento
+                FROM parcelas_cartao pc
+                JOIN faturas f
+                    ON f.id = pc.fatura_id
+                WHERE pc.compra_id = ?
+                ORDER BY pc.numero_parcela
+                """,
+                (compra_id,)
+            ).fetchall()
+
+        self.assertEqual(len(parcelas), 4)
+
+        # Confere os meses das faturas
+        self.assertEqual(
+            [(p[2], p[3]) for p in parcelas],
+            [
+                (2028, 2),
+                (2028, 3),
+                (2028, 4),
+                (2028, 5)
+            ]
+        )
+
+        # Confere as datas de fechamento
+        self.assertEqual(
+            [p[4] for p in parcelas],
+            [
+                "2028-02-07",
+                "2028-03-07",
+                "2028-04-07",
+                "2028-05-07"
+            ]
+        )
+
+        # Vencimento no mes seguinte ao fechamento
+        self.assertEqual(
+            [p[5] for p in parcelas],
+            [
+                "2028-03-15",
+                "2028-04-15",
+                "2028-05-15",
+                "2028-06-15"
+            ]
+        )
+
+        # Valores preservados
+        self.assertEqual(
+            [p[1] for p in parcelas],
+            [100.00] * 4
+        )
+
+        # Limite comprometido integralmente
+        self.assertEqual(
+            banco.calcular_limite_utilizado(self.cartao_id),
+            400.00
+        )
+
+        self.assertEqual(
+            banco.calcular_limite_disponivel(self.cartao_id),
+            4600.00
+        )
+
+    def test_parcelamento_virada_ano(self):
+        banco.criar_categorias()
+        banco.criar_compras_cartao()
+        banco.criar_parcelas_cartao()
+
+        categoria_id = next(
+            categoria[0]
+            for categoria in banco.listar_categorias("despesa")
+            if categoria[1] == "Alimentação"
+        )
+
+        resultado = banco.adicionar_compra_parcelada_cartao(
+            self.cartao_id,
+            categoria_id,
+            "Compra de dezembro",
+            "2026-12-20",
+            600.00,
+            3
+        )
+
+        self.assertTrue(resultado[0])
+        compra_id, quantidade = resultado[1]
+        self.assertEqual(quantidade, 3)
+
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            parcelas = conexao.execute(
+                """
+                SELECT
+                    pc.numero_parcela,
+                    pc.valor,
+                    f.ano,
+                    f.mes,
+                    f.data_fechamento,
+                    f.data_vencimento
+                FROM parcelas_cartao pc
+                JOIN faturas f
+                    ON f.id = pc.fatura_id
+                WHERE pc.compra_id = ?
+                ORDER BY pc.numero_parcela
+                """,
+                (compra_id,)
+            ).fetchall()
+
+        self.assertEqual(
+            parcelas,
+            [
+                (1, 200.00, 2027, 1, "2027-01-07", "2027-02-15"),
+                (2, 200.00, 2027, 2, "2027-02-07", "2027-03-15"),
+                (3, 200.00, 2027, 3, "2027-03-07", "2027-04-15")
+            ]
+        )
+
+        self.assertEqual(
+            banco.calcular_limite_utilizado(self.cartao_id),
+            600.00
+        )
+
+        self.assertEqual(
+            banco.calcular_limite_disponivel(self.cartao_id),
+            4400.00
+        )
+
+    def test_compra_parcelada_dados_invalidos(self):
+        banco.criar_categorias()
+        banco.criar_compras_cartao()
+        banco.criar_parcelas_cartao()
+
+        categoria_id = next(
+            categoria[0]
+            for categoria in banco.listar_categorias("despesa")
+            if categoria[1] == "Alimentação"
+        )
+
+        casos = [
+            ("quantidade_invalida", "Compra", "2026-11-06", 500.00, 1),
+            ("valor_invalido", "Compra", "2026-11-06", 0.00, 3),
+            ("valor_invalido", "Compra", "2026-11-06", -100.00, 3),
+            ("descricao_invalida", "   ", "2026-11-06", 500.00, 3),
+            ("data_invalida", "Compra", "2026-02-30", 500.00, 3),
+            ("data_invalida", "Compra", "data-errada", 500.00, 3)
+        ]
+
+        for erro, descricao, data, valor, parcelas in casos:
+            with self.subTest(erro=erro, data=data, valor=valor):
+                resultado = banco.adicionar_compra_parcelada_cartao(
+                    self.cartao_id,
+                    categoria_id,
+                    descricao,
+                    data,
+                    valor,
+                    parcelas
+                )
+
+                self.assertEqual(resultado, (False, erro))
+
+        # Nenhuma compra ou parcela deve ter sido criada
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            compras = conexao.execute(
+                "SELECT COUNT(*) FROM compras_cartao"
+            ).fetchone()[0]
+
+            parcelas = conexao.execute(
+                "SELECT COUNT(*) FROM parcelas_cartao"
+            ).fetchone()[0]
+
+            faturas = conexao.execute(
+                "SELECT COUNT(*) FROM faturas"
+            ).fetchone()[0]
+
+        self.assertEqual(compras, 0)
+        self.assertEqual(parcelas, 0)
+        self.assertEqual(faturas, 0)
+
+        # O limite deve permanecer integralmente disponivel
+        self.assertEqual(
+            banco.calcular_limite_disponivel(self.cartao_id),
+            5000.00
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
