@@ -658,6 +658,269 @@ class TestCriacaoFaturas(unittest.TestCase):
             5000.00
         )
 
+    def test_pagamento_fatura_libera_limite(self):
+        banco.criar_categorias()
+        banco.criar_compras_cartao()
+        banco.criar_parcelas_cartao()
+
+        categorias = banco.listar_categorias("despesa")
+        categoria_id = next(
+            categoria[0]
+            for categoria in categorias
+            if categoria[1] == "Alimentação"
+        )
+
+        resultado = banco.adicionar_compra_cartao(
+            self.cartao_id,
+            categoria_id,
+            "Compra para testar pagamento",
+            "2026-11-06",
+            800.00
+        )
+
+        self.assertTrue(resultado[0])
+        _, fatura_id = resultado[1]
+
+        # Antes do pagamento
+        self.assertEqual(
+            banco.calcular_limite_utilizado(self.cartao_id),
+            800.00
+        )
+        self.assertEqual(
+            banco.calcular_limite_disponivel(self.cartao_id),
+            4200.00
+        )
+
+        # Efetua o pagamento
+        pagamento = banco.pagar_fatura(
+            fatura_id,
+            "2026-12-10"
+        )
+
+        self.assertEqual(pagamento, (True, 800.00))
+
+        # Confere a persistencia do pagamento
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            fatura = conexao.execute(
+                """
+                SELECT paga, data_pagamento, valor_total
+                FROM faturas
+                WHERE id = ?
+                """,
+                (fatura_id,)
+            ).fetchone()
+
+        self.assertEqual(
+            fatura,
+            (1, "2026-12-10", 800.00)
+        )
+
+        # O limite deve ser liberado
+        self.assertEqual(
+            banco.calcular_limite_utilizado(self.cartao_id),
+            0.00
+        )
+        self.assertEqual(
+            banco.calcular_limite_disponivel(self.cartao_id),
+            5000.00
+        )
+
+        # Impede pagamento duplicado
+        segundo_pagamento = banco.pagar_fatura(
+            fatura_id,
+            "2026-12-11"
+        )
+
+        self.assertEqual(
+            segundo_pagamento,
+            (False, "fatura_ja_paga")
+        )
+
+
+    def test_pagamento_parcela_libera_limite_proporcional(self):
+        banco.criar_categorias()
+        banco.criar_compras_cartao()
+        banco.criar_parcelas_cartao()
+
+        categorias = banco.listar_categorias("despesa")
+        categoria_id = next(
+            categoria[0]
+            for categoria in categorias
+            if categoria[1] == "Alimentação"
+        )
+
+        resultado = banco.adicionar_compra_parcelada_cartao(
+            self.cartao_id,
+            categoria_id,
+            "Notebook parcelado",
+            "2026-11-06",
+            1200.00,
+            6
+        )
+
+        self.assertTrue(resultado[0])
+        compra_id, _ = resultado[1]
+
+        # Antes do pagamento, todo o valor compromete o limite
+        self.assertEqual(
+            banco.calcular_limite_utilizado(self.cartao_id),
+            1200.00
+        )
+        self.assertEqual(
+            banco.calcular_limite_disponivel(self.cartao_id),
+            3800.00
+        )
+
+        # Localiza a fatura da primeira parcela
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            primeira_fatura = conexao.execute(
+                """
+                SELECT pc.fatura_id
+                FROM parcelas_cartao pc
+                WHERE pc.compra_id = ?
+                AND pc.numero_parcela = 1
+                """,
+                (compra_id,)
+            ).fetchone()
+
+        self.assertIsNotNone(primeira_fatura)
+        fatura_id = primeira_fatura[0]
+
+        # Paga apenas a primeira fatura
+        pagamento = banco.pagar_fatura(
+            fatura_id,
+            "2026-12-10"
+        )
+
+        self.assertEqual(pagamento, (True, 200.00))
+
+        # Apenas R$ 200 devem ser liberados
+        self.assertEqual(
+            banco.calcular_limite_utilizado(self.cartao_id),
+            1000.00
+        )
+        self.assertEqual(
+            banco.calcular_limite_disponivel(self.cartao_id),
+            4000.00
+        )
+
+        # Confere que as outras cinco faturas continuam abertas
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            faturas_abertas = conexao.execute(
+                """
+                SELECT COUNT(*)
+                FROM faturas
+                WHERE cartao_id = ?
+                AND paga = 0
+                """,
+                (self.cartao_id,)
+            ).fetchone()[0]
+
+        self.assertEqual(faturas_abertas, 5)
+
+    def test_pagamento_fatura_inexistente(self):
+        # Prepara as tabelas necessarias para calcular o limite
+        banco.criar_compras_cartao()
+        banco.criar_parcelas_cartao()
+
+        # Tenta pagar uma fatura que nao existe
+        resultado = banco.pagar_fatura(
+            -1,
+            "2026-12-10"
+        )
+
+        self.assertEqual(
+            resultado,
+            (False, "fatura_inexistente")
+        )
+
+        # O limite deve permanecer inalterado
+        self.assertEqual(
+            banco.calcular_limite_utilizado(self.cartao_id),
+            0.00
+        )
+
+        self.assertEqual(
+            banco.calcular_limite_disponivel(self.cartao_id),
+            5000.00
+        )
+
+    def test_pagamento_fatura_com_compras_mistas(self):
+        banco.criar_categorias()
+        banco.criar_compras_cartao()
+        banco.criar_parcelas_cartao()
+
+        categoria_id = next(
+            categoria[0]
+            for categoria in banco.listar_categorias("despesa")
+            if categoria[1] == "Alimentação"
+        )
+
+        # Compra comum de R$ 300
+        compra_comum = banco.adicionar_compra_cartao(
+            self.cartao_id,
+            categoria_id,
+            "Compra comum",
+            "2026-11-06",
+            300.00
+        )
+
+        self.assertTrue(compra_comum[0])
+        fatura_id = compra_comum[1][1]
+
+        # Compra parcelada de R$ 1.200 em 6 vezes
+        compra_parcelada = banco.adicionar_compra_parcelada_cartao(
+            self.cartao_id,
+            categoria_id,
+            "Compra parcelada",
+            "2026-11-06",
+            1200.00,
+            6
+        )
+
+        self.assertTrue(compra_parcelada[0])
+
+        # Limite antes do pagamento
+        self.assertEqual(
+            banco.calcular_limite_utilizado(self.cartao_id),
+            1500.00
+        )
+        self.assertEqual(
+            banco.calcular_limite_disponivel(self.cartao_id),
+            3500.00
+        )
+
+        # A primeira fatura deve conter R$ 300 + R$ 200
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            valor_fatura = conexao.execute(
+                """
+                SELECT valor_total
+                FROM faturas
+                WHERE id = ?
+                """,
+                (fatura_id,)
+            ).fetchone()[0]
+
+        self.assertEqual(valor_fatura, 500.00)
+
+        # Paga a primeira fatura
+        pagamento = banco.pagar_fatura(
+            fatura_id,
+            "2026-12-10"
+        )
+
+        self.assertEqual(pagamento, (True, 500.00))
+
+        # Restam cinco parcelas de R$ 200
+        self.assertEqual(
+            banco.calcular_limite_utilizado(self.cartao_id),
+            1000.00
+        )
+        self.assertEqual(
+            banco.calcular_limite_disponivel(self.cartao_id),
+            4000.00
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
