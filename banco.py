@@ -1141,113 +1141,111 @@ def calcular_proxima_data_recorrencia(
 
 def gerar_proxima_ocorrencia(id_recorrencia):
     conexao = sqlite3.connect(obter_caminho_banco())
-    cursor = conexao.cursor()
 
-    cursor.execute("""
-        SELECT
-            valor,
-            frequencia,
-            data_fim,
-            ativa,
-            data_inicio
-        FROM recorrencias
-        WHERE id = ?
-    """, (id_recorrencia,))
+    try:
+        cursor = conexao.cursor()
 
-    recorrencia = cursor.fetchone()
+        cursor.execute("""
+            SELECT
+                valor,
+                frequencia,
+                data_fim,
+                ativa,
+                data_inicio
+            FROM recorrencias
+            WHERE id = ?
+        """, (id_recorrencia,))
 
-    if recorrencia is None:
-        conexao.close()
-        return False
+        recorrencia = cursor.fetchone()
 
-    valor, frequencia, data_fim, ativa, data_inicio = recorrencia
+        if recorrencia is None:
+            return False
 
-    if not ativa:
-        conexao.close()
-        return False
+        valor, frequencia, data_fim, ativa, data_inicio = recorrencia
 
-    cursor.execute("""
-        SELECT
-            data_vencimento
-        FROM recorrencia_ocorrencias
-        WHERE recorrencia_id = ?
-        ORDER BY data_vencimento DESC
-        LIMIT 1
-    """, (id_recorrencia,))
+        if not ativa:
+            return False
 
-    ultima_ocorrencia = cursor.fetchone()
+        cursor.execute("""
+            SELECT data_vencimento
+            FROM recorrencia_ocorrencias
+            WHERE recorrencia_id = ?
+            ORDER BY data_vencimento DESC
+            LIMIT 1
+        """, (id_recorrencia,))
 
-    if ultima_ocorrencia is None:
-        conexao.close()
-        return False
+        ultima_ocorrencia = cursor.fetchone()
 
-    ultima_data = datetime.strptime(
-        ultima_ocorrencia[0],
-        "%Y-%m-%d"
-       )
+        if ultima_ocorrencia is None:
+            return False
 
-    if not data_inicio:
-        conexao.close()
-        return False
-
-    if frequencia not in ("semanal", "mensal", "anual"):
-        conexao.close()
-        return False
-
-    proxima_data = calcular_proxima_data_recorrencia(
-        ultima_data,
-        data_inicio,
-        frequencia
-    )
-
-    proxima_data_str = proxima_data.strftime(
-        "%Y-%m-%d"
-    )
-
-    if data_fim is not None:
-        data_fim_objeto = datetime.strptime(
-            data_fim,
+        ultima_data = datetime.strptime(
+            ultima_ocorrencia[0],
             "%Y-%m-%d"
         )
 
-        if proxima_data > data_fim_objeto:
-            conexao.close()
+        if not data_inicio:
             return False
 
-    cursor.execute("""
-        SELECT id
-        FROM recorrencia_ocorrencias
-        WHERE recorrencia_id = ?
-        AND data_vencimento = ?
-    """, (
-        id_recorrencia,
-        proxima_data_str
-    ))
+        if frequencia not in ("semanal", "mensal", "anual"):
+            return False
 
-    existente = cursor.fetchone()
-
-    if existente is not None:
-        conexao.close()
-        return False
-
-    cursor.execute("""
-        INSERT INTO recorrencia_ocorrencias (
-            recorrencia_id,
-            data_vencimento,
-            valor,
-            pago
+        proxima_data = calcular_proxima_data_recorrencia(
+            ultima_data,
+            data_inicio,
+            frequencia
         )
-        VALUES (?, ?, ?, 0)
-    """, (
-        id_recorrencia,
-        proxima_data_str,
-        valor
-    ))
 
-    conexao.commit()
-    conexao.close()
+        if isinstance(proxima_data, datetime):
+            proxima_data = proxima_data.date()
 
-    return True    
+        proxima_data_str = proxima_data.strftime("%Y-%m-%d")
+
+        if data_fim is not None:
+            data_fim_objeto = datetime.strptime(
+                data_fim,
+                "%Y-%m-%d"
+            ).date()
+
+            if proxima_data > data_fim_objeto:
+                return False
+
+        cursor.execute("""
+            SELECT id
+            FROM recorrencia_ocorrencias
+            WHERE recorrencia_id = ?
+            AND data_vencimento = ?
+        """, (
+            id_recorrencia,
+            proxima_data_str
+        ))
+
+        if cursor.fetchone() is not None:
+            return False
+
+        cursor.execute("""
+            INSERT INTO recorrencia_ocorrencias (
+                recorrencia_id,
+                data_vencimento,
+                valor,
+                pago
+            )
+            VALUES (?, ?, ?, 0)
+        """, (
+            id_recorrencia,
+            proxima_data_str,
+            valor
+        ))
+
+        conexao.commit()
+        return True
+
+    except Exception:
+        conexao.rollback()
+        raise
+
+    finally:
+        conexao.close()
 
 def atualizar_recorrencia(
     id_recorrencia,
