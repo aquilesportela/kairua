@@ -2,6 +2,7 @@ import sqlite3
 from datetime import datetime, timedelta
 import calendar
 import os
+from decimal import Decimal, InvalidOperation
 
 def obter_caminho_banco():
     return os.environ.get(
@@ -1593,6 +1594,7 @@ def criar_parcelamentos():
     conexao.commit()
     conexao.close()    
 
+
 def adicionar_parcelamento(
     descricao,
     tipo,
@@ -1601,103 +1603,144 @@ def adicionar_parcelamento(
     quantidade_parcelas,
     data_inicio
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
-    cursor = conexao.cursor()
+    # Valida a quantidade de parcelas
+    if (
+        isinstance(quantidade_parcelas, bool)
+        or not isinstance(quantidade_parcelas, int)
+        or quantidade_parcelas <= 0
+    ):
+        raise ValueError(
+            "A quantidade de parcelas deve ser um inteiro positivo."
+        )
 
-    valor_parcela = (
-        valor_total / quantidade_parcelas
+    # Valida o valor monetario
+    try:
+        valor_total = Decimal(str(valor_total))
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValueError("Valor total invalido.") from None
+
+    if not valor_total.is_finite() or valor_total <= 0:
+        raise ValueError(
+            "O valor total deve ser maior que zero."
+        )
+
+    if valor_total.as_tuple().exponent < -2:
+        raise ValueError(
+            "O valor total deve ter no maximo duas casas decimais."
+        )
+
+    # Valida a data antes de abrir a conexao
+    try:
+        data_atual = datetime.strptime(
+            data_inicio,
+            "%Y-%m-%d"
+        )
+    except (ValueError, TypeError):
+        raise ValueError(
+            "Data de inicio invalida. Use AAAA-MM-DD."
+        ) from None
+
+    # Calcula os valores antes de acessar o banco
+    total_centavos = int(valor_total * 100)
+    valor_total = float(valor_total)
+
+    centavos_base, centavos_restantes = divmod(
+        total_centavos,
+        quantidade_parcelas
     )
 
-    cursor.execute("""
-        INSERT INTO parcelamentos (
+    conexao = sqlite3.connect(obter_caminho_banco())
+
+    try:
+        cursor = conexao.cursor()
+
+        cursor.execute("""
+            INSERT INTO parcelamentos (
+                descricao,
+                tipo,
+                categoria_id,
+                valor_total,
+                quantidade_parcelas,
+                data_inicio,
+                ativa
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 1)
+        """, (
             descricao,
             tipo,
             categoria_id,
             valor_total,
             quantidade_parcelas,
-            data_inicio,
-            ativa
-        )
-        VALUES (?, ?, ?, ?, ?, ?, 1)
-    """, (
-        descricao,
-        tipo,
-        categoria_id,
-        valor_total,
-        quantidade_parcelas,
-        data_inicio
-    ))
-
-    parcelamento_id = cursor.lastrowid
-
-    data_atual = datetime.strptime(
-        data_inicio,
-        "%Y-%m-%d"
-    )
-
-    for numero_parcela in range(
-        1,
-        quantidade_parcelas + 1
-    ):
-        if numero_parcela == 1:
-            data_vencimento = data_atual
-
-        else:
-            mes = data_atual.month + 1
-            ano = data_atual.year
-
-            if mes > 12:
-                mes = 1
-                ano += 1
-
-            try:
-                data_atual = data_atual.replace(
-                    year=ano,
-                    month=mes
-                )
-
-            except ValueError:
-                import calendar
-
-                ultimo_dia = calendar.monthrange(
-                    ano,
-                    mes
-                )[1]
-
-                data_atual = data_atual.replace(
-                    year=ano,
-                    month=mes,
-                    day=ultimo_dia
-                )
-
-            data_vencimento = data_atual
-
-        data_vencimento_str = (
-            data_vencimento.strftime(
-                "%Y-%m-%d"
-            )
-        )
-
-        cursor.execute("""
-            INSERT INTO parcelamento_parcelas (
-                parcelamento_id,
-                numero_parcela,
-                data_vencimento,
-                valor,
-                pago
-            )
-            VALUES (?, ?, ?, ?, 0)
-        """, (
-            parcelamento_id,
-            numero_parcela,
-            data_vencimento_str,
-            valor_parcela
+            data_inicio
         ))
 
-    conexao.commit()
-    conexao.close()
+        parcelamento_id = cursor.lastrowid
 
-    return parcelamento_id    
+        for numero_parcela in range(
+            1,
+            quantidade_parcelas + 1
+        ):
+            valor_parcela_centavos = centavos_base
+
+            if numero_parcela == quantidade_parcelas:
+                valor_parcela_centavos += centavos_restantes
+
+            valor_parcela = valor_parcela_centavos / 100
+
+            # Calcula o vencimento usando a data original
+            meses_decorridos = numero_parcela - 1
+
+            indice_mes = (
+                data_atual.year * 12
+                + data_atual.month - 1
+                + meses_decorridos
+            )
+
+            ano = indice_mes // 12
+            mes = indice_mes % 12 + 1
+
+            ultimo_dia = calendar.monthrange(ano, mes)[1]
+            dia = min(data_atual.day, ultimo_dia)
+
+            data_vencimento = data_atual.replace(
+                year=ano,
+                month=mes,
+                day=dia
+            )
+
+            data_vencimento_str = (
+                data_vencimento.strftime("%Y-%m-%d")
+            )
+
+            cursor.execute("""
+                INSERT INTO parcelamento_parcelas (
+                    parcelamento_id,
+                    numero_parcela,
+                    data_vencimento,
+                    valor,
+                    pago
+                )
+                VALUES (?, ?, ?, ?, 0)
+            """, (
+                parcelamento_id,
+                numero_parcela,
+                data_vencimento_str,
+                valor_parcela
+            ))
+
+        # Confirma somente quando todas as parcelas foram inseridas
+        conexao.commit()
+
+    except Exception:
+        # Desfaz todas as alteracoes em caso de falha
+        conexao.rollback()
+        raise
+
+    finally:
+        # Fecha a conexao mesmo quando ocorre uma excecao
+        conexao.close()
+
+    return parcelamento_id
 
 def listar_parcelamentos():
     conexao = sqlite3.connect(obter_caminho_banco())
