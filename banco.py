@@ -2,6 +2,8 @@ import sqlite3
 from datetime import datetime, timedelta
 import calendar
 import os
+import stat
+from pathlib import Path
 from decimal import Decimal, InvalidOperation
 
 def obter_caminho_banco():
@@ -10,8 +12,141 @@ def obter_caminho_banco():
         "financeiro.db"
     )
 
+
+def abrir_conexao():
+    """Abre o banco configurado, preservando as opcoes atuais do SQLite."""
+    return sqlite3.connect(obter_caminho_banco())
+
+
+_TABELA_MIGRACOES = """
+    CREATE TABLE IF NOT EXISTS esquema_migracoes (
+        versao INTEGER PRIMARY KEY CHECK (versao > 0),
+        nome TEXT NOT NULL,
+        aplicada_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+"""
+
+# Catalogo aditivo: nunca editar uma versao ja publicada.
+# As migracoes antigas permanecem independentes; nao ha baseline implicito.
+MIGRACOES = (
+    (1, "controle_de_versoes", ()),
+)
+
+
+def _validar_destino_migracoes(destino):
+    """Valida sem consultar financeiro.db; rejeita aliases em vez de segui-los."""
+    if destino is None:
+        raise ValueError("Informe explicitamente o destino das migracoes.")
+    try:
+        texto = os.fspath(destino)
+        if not isinstance(texto, str) or not texto or "\x00" in texto:
+            raise ValueError("Destino invalido.")
+        caminho = Path(texto)
+        # Nomes reservados, streams, URIs, UNC e aliases 8.3 sao ambiguos.
+        if (
+            texto.startswith(("file:", "\\\\", "//"))
+            or ":" in texto[len(caminho.drive):]
+            or any(
+                parte.casefold().rstrip(" .") == "financeiro.db"
+                or parte.endswith((" ", ".")) and parte not in (".", "..")
+                or "~" in parte
+                for parte in caminho.parts
+            )
+        ):
+            raise ValueError("Destino protegido ou ambiguo.")
+        caminho = Path(os.path.abspath(caminho))
+        # Inspeciona os componentes antes de resolve(): nao segue links.
+        for componente in reversed((caminho, *caminho.parents)):
+            try:
+                info = componente.lstat()
+            except FileNotFoundError:
+                if componente == caminho:
+                    continue
+                raise ValueError("O diretorio de destino deve existir.")
+            if (
+                stat.S_ISLNK(info.st_mode)
+                or getattr(info, "st_file_attributes", 0) & 0x400
+            ):
+                raise ValueError("Links e reparse points nao sao destinos seguros.")
+            if componente == caminho:
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not info.st_ino:
+                    raise ValueError("Arquivo especial ou com identidade ambigua.")
+            elif not stat.S_ISDIR(info.st_mode):
+                raise ValueError("Componente de caminho invalido.")
+        resolvido = caminho.resolve(strict=False)
+        if os.path.normcase(str(resolvido)) != os.path.normcase(str(caminho)):
+            raise ValueError("Alias de destino nao permitido.")
+        return str(resolvido)
+    except (OSError, RuntimeError, TypeError) as erro:
+        raise ValueError("Nao foi possivel comprovar a seguranca do destino.") from erro
+
+
+def _autorizar_sql_migracao(acao, argumento1, argumento2, banco, origem):
+    # O parser do SQLite identifica inclusive comandos com comentarios/mixed case.
+    proibidas = {
+        sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
+        sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH, sqlite3.SQLITE_PRAGMA,
+    }
+    if acao in proibidas:
+        return sqlite3.SQLITE_DENY
+    # Impede SQL do catalogo de adulterar o registro de versoes.
+    if argumento1 == "esquema_migracoes" and acao != sqlite3.SQLITE_READ:
+        return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
+
+def aplicar_migracoes(destino=None):
+    """Aplica cada versao atomicamente em destino explicito e validado.
+
+    Nao utiliza KAIRUA_DB_PATH como destino implicito. Versoes anteriores
+    confirmadas permanecem se uma versao posterior falhar.
+    """
+    caminho = _validar_destino_migracoes(destino)
+    versoes = [versao for versao, _, _ in MIGRACOES]
+    if (
+        not versoes
+        or any(type(versao) is not int or versao <= 0 for versao in versoes)
+        or versoes != sorted(set(versoes))
+    ):
+        raise ValueError("Catalogo de migracoes invalido.")
+
+    conexao = sqlite3.connect(caminho)
+    aplicadas = []
+    try:
+        for versao, nome, instrucoes in MIGRACOES:
+            conexao.execute("BEGIN IMMEDIATE")
+            conexao.execute(_TABELA_MIGRACOES)
+            historico = conexao.execute(
+                "SELECT versao, nome FROM esquema_migracoes ORDER BY versao"
+            ).fetchall()
+            esperado = [(v, n) for v, n, _ in MIGRACOES[:len(historico)]]
+            if historico != esperado:
+                raise ValueError("Historico de migracoes nao e um prefixo do catalogo.")
+            if versao not in {v for v, _ in historico}:
+                # A versao 1 cria apenas o controle, ja criado pelo bootstrap.
+                # Toda instrucao do catalogo ainda passa pelo autorizador.
+                conexao.set_authorizer(_autorizar_sql_migracao)
+                try:
+                    for instrucao in instrucoes:
+                        conexao.execute(instrucao)
+                finally:
+                    conexao.set_authorizer(None)
+                conexao.execute(
+                    "INSERT INTO esquema_migracoes (versao, nome) VALUES (?, ?)",
+                    (versao, nome)
+                )
+                aplicadas.append(versao)
+            conexao.commit()
+        return aplicadas
+    except Exception:
+        conexao.rollback()
+        raise
+    finally:
+        conexao.close()
+
+
 def criar_banco():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -31,7 +166,7 @@ def criar_banco():
 
 
 def criar_categorias():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -66,7 +201,7 @@ def criar_categorias():
     conexao.close()
 
 def migrar_datas():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -102,7 +237,7 @@ def migrar_datas():
 
 
 def migrar_categorias():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -169,7 +304,7 @@ def adicionar_lancamento(
     categoria_id,
     valor
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -192,7 +327,7 @@ def adicionar_lancamento(
 
 
 def listar_categorias(tipo=None):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -224,7 +359,7 @@ def listar_lancamentos(
     tipo=None,
     categoria_id=None
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -284,7 +419,7 @@ def listar_lancamentos(
     return lancamentos
 
 def listar_lancamentos_mensal(ano, mes):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -322,7 +457,7 @@ def listar_lancamentos_mensal(ano, mes):
     return lancamentos
 
 def listar_lancamentos_tipo(tipo):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -348,7 +483,7 @@ def listar_lancamentos_tipo(tipo):
     return lancamentos
 
 def listar_lancamentos_categoria(categoria_id):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -374,7 +509,7 @@ def listar_lancamentos_categoria(categoria_id):
     return lancamentos
 
 def calcular_resumo():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -404,7 +539,7 @@ def calcular_resumo():
     return receitas, despesas, saldo
 
 def calcular_resumo_mensal(ano, mes):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -447,7 +582,7 @@ def calcular_resumo_mensal(ano, mes):
     return receitas, despesas, saldo
 
 def despesas_por_categoria():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -471,7 +606,7 @@ def despesas_por_categoria():
 
 
 def despesas_por_categoria_mensal(ano, mes):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -511,7 +646,7 @@ def despesas_por_categoria_mensal(ano, mes):
     return resultados
 
 def buscar_lancamento(id_lancamento):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -548,7 +683,7 @@ def atualizar_lancamento(
     categoria_id,
     valor
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -600,7 +735,7 @@ def atualizar_lancamento(
     return atualizado
 
 def excluir_lancamento(id_lancamento):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -620,7 +755,7 @@ def excluir_lancamento(id_lancamento):
     return excluido
 
 def adicionar_categoria(nome, tipo):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -657,7 +792,7 @@ def adicionar_categoria(nome, tipo):
     return True
 
 def atualizar_categoria(id_categoria, nome, tipo):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -705,7 +840,7 @@ def atualizar_categoria(id_categoria, nome, tipo):
     return atualizado
 
 def excluir_categoria(id_categoria):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -740,7 +875,7 @@ def excluir_categoria(id_categoria):
     return excluida, 0
 
 def criar_recorrencias():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -793,7 +928,7 @@ def criar_recorrencias():
 
 
 def migrar_lancamentos_recorrencia():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -822,7 +957,7 @@ def migrar_lancamentos_recorrencia():
     conexao.close()
 
 def migrar_lancamentos_parcelamento():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -854,7 +989,7 @@ def adicionar_recorrencia(
     data_inicio,
     data_fim=None
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -908,7 +1043,7 @@ def adicionar_recorrencia(
     return recorrencia_id
 
 def listar_recorrencias():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -937,7 +1072,7 @@ def listar_recorrencias():
     return recorrencias
 
 def listar_ocorrencias_recorrencia(id_recorrencia):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     cursor = conexao.cursor()
 
@@ -968,7 +1103,7 @@ def marcar_ocorrencia_paga(id_ocorrencia, data_pagamento):
     except (ValueError, TypeError):
         return False
 
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     recorrencia_id = None
 
     try:
@@ -1141,7 +1276,7 @@ def calcular_proxima_data_recorrencia(
     )
 
 def gerar_proxima_ocorrencia(id_recorrencia):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     try:
         cursor = conexao.cursor()
@@ -1257,7 +1392,7 @@ def atualizar_recorrencia(
     frequencia,
     data_fim
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -1313,7 +1448,7 @@ def alterar_status_recorrencia(
     id_recorrencia,
     ativa
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -1333,7 +1468,7 @@ def alterar_status_recorrencia(
     return alteracoes > 0
 
 def excluir_recorrencia(id_recorrencia):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -1384,7 +1519,7 @@ def excluir_recorrencia(id_recorrencia):
         return False
 
 def sincronizar_recorrencias():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -1511,7 +1646,7 @@ def sincronizar_recorrencias():
     return total_criadas
 
 def resumo_ocorrencias_recorrencia(id_recorrencia):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -1552,7 +1687,7 @@ def resumo_ocorrencias_recorrencia(id_recorrencia):
     return resultado
 
 def criar_parcelamentos():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -1649,7 +1784,7 @@ def adicionar_parcelamento(
         quantidade_parcelas
     )
 
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     try:
         cursor = conexao.cursor()
@@ -1744,7 +1879,7 @@ def adicionar_parcelamento(
 
 
 def listar_parcelamentos():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     try:
         cursor = conexao.cursor()
@@ -1773,7 +1908,7 @@ def listar_parcelamentos():
 
 
 def listar_parcelas_parcelamento(id_parcelamento):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     try:
         cursor = conexao.cursor()
@@ -1799,7 +1934,7 @@ def listar_parcelas_parcelamento(id_parcelamento):
 
 
 def resumo_parcelas_parcelamento(id_parcelamento):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     try:
         cursor = conexao.cursor()
@@ -1848,7 +1983,7 @@ def marcar_parcela_paga(id_parcela, data_pagamento):
     except (ValueError, TypeError):
         return False
 
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     try:
         cursor = conexao.cursor()
@@ -1958,7 +2093,7 @@ def atualizar_parcelamento(
     descricao,
     categoria_id
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     try:
         cursor = conexao.cursor()
@@ -2007,7 +2142,7 @@ def alterar_status_parcelamento(
             "O status deve ser 0 (inativo) ou 1 (ativo)."
         )
 
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     try:
         cursor = conexao.cursor()
@@ -2044,7 +2179,7 @@ def alterar_status_parcelamento(
 
 
 def excluir_parcelamento(id_parcelamento):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
 
     try:
         cursor = conexao.cursor()
@@ -2103,7 +2238,7 @@ def excluir_parcelamento(id_parcelamento):
         conexao.close()
 
 def criar_cartoes():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS cartoes (
@@ -2125,7 +2260,7 @@ def adicionar_cartao(
     dia_fechamento,
     dia_vencimento
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -2147,7 +2282,7 @@ def adicionar_cartao(
     conexao.close()
 
 def listar_cartoes():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -2169,7 +2304,7 @@ def listar_cartoes():
     return cartoes
 
 def criar_faturas():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -2193,7 +2328,7 @@ def criar_faturas():
     conexao.close()
 
 def criar_compras_cartao():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -2218,7 +2353,7 @@ def criar_compras_cartao():
     conexao.close()
 
 def criar_parcelas_cartao():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -2317,7 +2452,7 @@ def obter_ou_criar_fatura(
     cartao_id,
     data_compra
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     cursor.execute("""
@@ -2390,7 +2525,7 @@ def obter_ou_criar_fatura(
     return id_fatura
 
 def listar_faturas(cartao_id=None):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     query = """
@@ -2433,7 +2568,7 @@ def listar_faturas(cartao_id=None):
     return faturas
 
 def pagar_fatura(id_fatura, data_pagamento):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -2484,7 +2619,7 @@ def adicionar_compra_cartao(
     data_compra,
     valor
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -2669,7 +2804,7 @@ def adicionar_compra_cartao(
         conexao.close()
 
 def listar_compras_cartao(fatura_id=None):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     query = """
@@ -2718,7 +2853,7 @@ def adicionar_compra_parcelada_cartao(
     valor_total,
     quantidade_parcelas
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3014,7 +3149,7 @@ def adicionar_compra_parcelada_cartao(
         conexao.close()
 
 def calcular_limite_utilizado(cartao_id):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3061,7 +3196,7 @@ def calcular_limite_utilizado(cartao_id):
         conexao.close()
 
 def calcular_limite_disponivel(cartao_id):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3091,7 +3226,7 @@ def calcular_limite_disponivel(cartao_id):
         conexao.close()
 
 def obter_dashboard():
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3249,7 +3384,7 @@ def obter_dashboard():
         conexao.close()
 
 def obter_resumo_mensal_detalhado(ano, mes):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3378,7 +3513,7 @@ def obter_resumo_mensal_detalhado(ano, mes):
         conexao.close()
 
 def obter_evolucao_anual(ano):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3515,7 +3650,7 @@ def obter_comparacao_mensal(ano, mes):
     }
 
 def obter_resumo_cartao(cartao_id):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3637,7 +3772,7 @@ def obter_gastos_cartao_por_categoria(
     ano,
     mes
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3686,7 +3821,7 @@ def obter_gastos_cartao_por_categoria(
             pass
 
 def obter_compromisso_faturas_cartao(cartao_id):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3785,7 +3920,7 @@ def obter_compromisso_faturas_cartao(cartao_id):
         conexao.close()
 
 def obter_projecao_faturas(cartao_id, quantidade_meses=6):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3857,7 +3992,7 @@ def atualizar_cartao(
     dia_fechamento,
     dia_vencimento
 ):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3913,7 +4048,7 @@ def atualizar_cartao(
 
 
 def alterar_status_cartao(cartao_id):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
@@ -3951,7 +4086,7 @@ def alterar_status_cartao(cartao_id):
 
 
 def excluir_cartao(cartao_id):
-    conexao = sqlite3.connect(obter_caminho_banco())
+    conexao = abrir_conexao()
     cursor = conexao.cursor()
 
     try:
