@@ -958,7 +958,7 @@ def listar_ocorrencias_recorrencia(id_recorrencia):
 
     conexao.close()
 
-    return ocorrencias    
+    return ocorrencias
 
 def marcar_ocorrencia_paga(id_ocorrencia, data_pagamento):
     from datetime import datetime
@@ -1330,7 +1330,7 @@ def alterar_status_recorrencia(
     conexao.commit()
     conexao.close()
 
-    return alteracoes > 0    
+    return alteracoes > 0
 
 def excluir_recorrencia(id_recorrencia):
     conexao = sqlite3.connect(obter_caminho_banco())
@@ -1592,7 +1592,7 @@ def criar_parcelamentos():
     """)
 
     conexao.commit()
-    conexao.close()    
+    conexao.close()
 
 
 def adicionar_parcelamento(
@@ -1742,97 +1742,103 @@ def adicionar_parcelamento(
 
     return parcelamento_id
 
+
 def listar_parcelamentos():
     conexao = sqlite3.connect(obter_caminho_banco())
-    cursor = conexao.cursor()
 
-    cursor.execute("""
-        SELECT
-            parcelamentos.id,
-            parcelamentos.descricao,
-            parcelamentos.tipo,
-            categorias.nome,
-            parcelamentos.valor_total,
-            parcelamentos.quantidade_parcelas,
-            parcelamentos.data_inicio,
-            parcelamentos.ativa
-        FROM parcelamentos
-        INNER JOIN categorias
-            ON parcelamentos.categoria_id = categorias.id
-        ORDER BY parcelamentos.ativa DESC,
-                 parcelamentos.id
-    """)
+    try:
+        cursor = conexao.cursor()
 
-    parcelamentos = cursor.fetchall()
+        cursor.execute("""
+            SELECT
+                parcelamentos.id,
+                parcelamentos.descricao,
+                parcelamentos.tipo,
+                categorias.nome,
+                parcelamentos.valor_total,
+                parcelamentos.quantidade_parcelas,
+                parcelamentos.data_inicio,
+                parcelamentos.ativa
+            FROM parcelamentos
+            INNER JOIN categorias
+                ON parcelamentos.categoria_id = categorias.id
+            ORDER BY parcelamentos.ativa DESC,
+                     parcelamentos.id
+        """)
 
-    conexao.close()
+        return cursor.fetchall()
 
-    return parcelamentos    
+    finally:
+        conexao.close()
+
 
 def listar_parcelas_parcelamento(id_parcelamento):
     conexao = sqlite3.connect(obter_caminho_banco())
-    cursor = conexao.cursor()
 
-    cursor.execute("""
-        SELECT
-            id,
-            numero_parcela,
-            data_vencimento,
-            valor,
-            pago,
-            data_pagamento,
-            lancamento_id
-        FROM parcelamento_parcelas
-        WHERE parcelamento_id = ?
-        ORDER BY numero_parcela
-    """, (id_parcelamento,))
+    try:
+        cursor = conexao.cursor()
+        cursor.execute("""
+            SELECT
+                id,
+                numero_parcela,
+                data_vencimento,
+                valor,
+                pago,
+                data_pagamento,
+                lancamento_id
+            FROM parcelamento_parcelas
+            WHERE parcelamento_id = ?
+            ORDER BY numero_parcela
+        """, (id_parcelamento,))
 
-    parcelas = cursor.fetchall()
+        return cursor.fetchall()
 
-    conexao.close()
+    finally:
+        conexao.close()
 
-    return parcelas    
+
 
 def resumo_parcelas_parcelamento(id_parcelamento):
     conexao = sqlite3.connect(obter_caminho_banco())
-    cursor = conexao.cursor()
 
-    cursor.execute("""
-        SELECT
-            COUNT(*),
-            COALESCE(SUM(
-                CASE
-                    WHEN pago = 1 THEN 1
-                    ELSE 0
-                END
-            ), 0),
-            COALESCE(SUM(
-                CASE
-                    WHEN pago = 0 THEN 1
-                    ELSE 0
-                END
-            ), 0),
-            COALESCE(SUM(
-                CASE
-                    WHEN pago = 1 THEN valor
-                    ELSE 0
-                END
-            ), 0),
-            COALESCE(SUM(
-                CASE
-                    WHEN pago = 0 THEN valor
-                    ELSE 0
-                END
-            ), 0)
-        FROM parcelamento_parcelas
-        WHERE parcelamento_id = ?
-    """, (id_parcelamento,))
+    try:
+        cursor = conexao.cursor()
 
-    resultado = cursor.fetchone()
+        cursor.execute("""
+            SELECT
+                COUNT(*),
+                COALESCE(SUM(
+                    CASE
+                        WHEN pago = 1 THEN 1
+                        ELSE 0
+                    END
+                ), 0),
+                COALESCE(SUM(
+                    CASE
+                        WHEN pago = 0 THEN 1
+                        ELSE 0
+                    END
+                ), 0),
+                COALESCE(SUM(
+                    CASE
+                        WHEN pago = 1 THEN valor
+                        ELSE 0
+                    END
+                ), 0),
+                COALESCE(SUM(
+                    CASE
+                        WHEN pago = 0 THEN valor
+                        ELSE 0
+                    END
+                ), 0)
+            FROM parcelamento_parcelas
+            WHERE parcelamento_id = ?
+        """, (id_parcelamento,))
 
-    conexao.close()
+        return cursor.fetchone()
 
-    return resultado    
+    finally:
+        conexao.close()
 
 def marcar_parcela_paga(id_parcela, data_pagamento):
     from datetime import datetime
@@ -1946,124 +1952,159 @@ def marcar_parcela_paga(id_parcela, data_pagamento):
     finally:
         conexao.close()
 
+
 def atualizar_parcelamento(
     id_parcelamento,
     descricao,
     categoria_id
 ):
     conexao = sqlite3.connect(obter_caminho_banco())
-    cursor = conexao.cursor()
 
-    cursor.execute("""
-        SELECT id
-        FROM parcelamentos
-        WHERE id = ?
-    """, (id_parcelamento,))
+    try:
+        cursor = conexao.cursor()
 
-    parcelamento = cursor.fetchone()
+        cursor.execute("""
+            SELECT id
+            FROM parcelamentos
+            WHERE id = ?
+        """, (id_parcelamento,))
 
-    if parcelamento is None:
+        parcelamento = cursor.fetchone()
+
+        if parcelamento is None:
+            return False
+
+        cursor.execute("""
+            UPDATE parcelamentos
+            SET
+                descricao = ?,
+                categoria_id = ?
+            WHERE id = ?
+        """, (
+            descricao,
+            categoria_id,
+            id_parcelamento
+        ))
+
+        conexao.commit()
+        return True
+
+    except Exception:
+        conexao.rollback()
+        raise
+
+    finally:
         conexao.close()
-        return False
 
-    cursor.execute("""
-        UPDATE parcelamentos
-        SET
-            descricao = ?,
-            categoria_id = ?
-        WHERE id = ?
-    """, (
-        descricao,
-        categoria_id,
-        id_parcelamento
-    ))
-
-    conexao.commit()
-    conexao.close()
-
-    return True    
 
 def alterar_status_parcelamento(
     id_parcelamento,
     ativa
 ):
+    # Aceita somente os estados 0 e 1
+    if type(ativa) is not int or ativa not in (0, 1):
+        raise ValueError(
+            "O status deve ser 0 (inativo) ou 1 (ativo)."
+        )
+
     conexao = sqlite3.connect(obter_caminho_banco())
-    cursor = conexao.cursor()
 
-    cursor.execute("""
-        SELECT id
-        FROM parcelamentos
-        WHERE id = ?
-    """, (id_parcelamento,))
+    try:
+        cursor = conexao.cursor()
 
-    parcelamento = cursor.fetchone()
+        cursor.execute("""
+            SELECT id
+            FROM parcelamentos
+            WHERE id = ?
+        """, (id_parcelamento,))
 
-    if parcelamento is None:
+        parcelamento = cursor.fetchone()
+
+        if parcelamento is None:
+            return False
+
+        cursor.execute("""
+            UPDATE parcelamentos
+            SET ativa = ?
+            WHERE id = ?
+        """, (
+            ativa,
+            id_parcelamento
+        ))
+
+        conexao.commit()
+        return True
+
+    except Exception:
+        conexao.rollback()
+        raise
+
+    finally:
         conexao.close()
-        return False
 
-    cursor.execute("""
-        UPDATE parcelamentos
-        SET ativa = ?
-        WHERE id = ?
-    """, (
-        ativa,
-        id_parcelamento
-    ))
-
-    conexao.commit()
-    conexao.close()
-
-    return True    
 
 def excluir_parcelamento(id_parcelamento):
     conexao = sqlite3.connect(obter_caminho_banco())
-    cursor = conexao.cursor()
 
-    cursor.execute("""
-        SELECT id
-        FROM parcelamentos
-        WHERE id = ?
-    """, (id_parcelamento,))
+    try:
+        cursor = conexao.cursor()
 
-    parcelamento = cursor.fetchone()
+        # Verifica se o parcelamento existe
+        cursor.execute("""
+            SELECT id
+            FROM parcelamentos
+            WHERE id = ?
+        """, (id_parcelamento,))
 
-    if parcelamento is None:
+        if cursor.fetchone() is None:
+            return False, "nao_encontrado"
+
+        # Impede exclusao se houver parcelas pagas
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM parcelamento_parcelas
+            WHERE parcelamento_id = ?
+              AND pago = 1
+        """, (id_parcelamento,))
+
+        if cursor.fetchone()[0] > 0:
+            return False, "possui_pagamentos"
+
+        # Impede exclusao se houver lancamentos vinculados
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM parcelamento_parcelas
+            WHERE parcelamento_id = ?
+              AND lancamento_id IS NOT NULL
+        """, (id_parcelamento,))
+
+        if cursor.fetchone()[0] > 0:
+            return False, "possui_lancamentos"
+
+        # Remove as parcelas antes do parcelamento
+        cursor.execute("""
+            DELETE FROM parcelamento_parcelas
+            WHERE parcelamento_id = ?
+        """, (id_parcelamento,))
+
+        cursor.execute("""
+            DELETE FROM parcelamentos
+            WHERE id = ?
+        """, (id_parcelamento,))
+
+        conexao.commit()
+        return True, "excluido"
+
+    except Exception:
+        conexao.rollback()
+        raise
+
+    finally:
         conexao.close()
-        return False, "nao_encontrado"
-
-    cursor.execute("""
-        SELECT COUNT(*)
-        FROM parcelamento_parcelas
-        WHERE parcelamento_id = ?
-        AND pago = 1
-    """, (id_parcelamento,))
-
-    parcelas_pagas = cursor.fetchone()[0]
-
-    if parcelas_pagas > 0:
-        conexao.close()
-        return False, "possui_pagamentos"
-
-    cursor.execute("""
-        DELETE FROM parcelamento_parcelas
-        WHERE parcelamento_id = ?
-    """, (id_parcelamento,))
-
-    cursor.execute("""
-        DELETE FROM parcelamentos
-        WHERE id = ?
-    """, (id_parcelamento,))
-
-    conexao.commit()
-    conexao.close()
-
-    return True, "excluido"    
 
 def criar_cartoes():
     conexao = sqlite3.connect(obter_caminho_banco())
     cursor = conexao.cursor()
-
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS cartoes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2076,7 +2117,7 @@ def criar_cartoes():
     """)
 
     conexao.commit()
-    conexao.close()    
+    conexao.close()
 
 def adicionar_cartao(
     nome,
@@ -2103,7 +2144,7 @@ def adicionar_cartao(
     ))
 
     conexao.commit()
-    conexao.close()    
+    conexao.close()
 
 def listar_cartoes():
     conexao = sqlite3.connect(obter_caminho_banco())
@@ -2125,7 +2166,7 @@ def listar_cartoes():
 
     conexao.close()
 
-    return cartoes  
+    return cartoes
 
 def criar_faturas():
     conexao = sqlite3.connect(obter_caminho_banco())
@@ -2149,7 +2190,7 @@ def criar_faturas():
     """)
 
     conexao.commit()
-    conexao.close()      
+    conexao.close()
 
 def criar_compras_cartao():
     conexao = sqlite3.connect(obter_caminho_banco())
@@ -2389,7 +2430,7 @@ def listar_faturas(cartao_id=None):
 
     conexao.close()
 
-    return faturas  
+    return faturas
 
 def pagar_fatura(id_fatura, data_pagamento):
     conexao = sqlite3.connect(obter_caminho_banco())
@@ -2579,7 +2620,7 @@ def adicionar_compra_cartao(
 
         id_compra = cursor.lastrowid
 
-        
+
         cursor.execute("""
             UPDATE faturas
             SET valor_total = (
@@ -2625,7 +2666,7 @@ def adicionar_compra_cartao(
         raise
 
     finally:
-        conexao.close() 
+        conexao.close()
 
 def listar_compras_cartao(fatura_id=None):
     conexao = sqlite3.connect(obter_caminho_banco())
@@ -2667,7 +2708,7 @@ def listar_compras_cartao(fatura_id=None):
 
     conexao.close()
 
-    return compras  
+    return compras
 
 def adicionar_compra_parcelada_cartao(
     cartao_id,
@@ -2681,7 +2722,7 @@ def adicionar_compra_parcelada_cartao(
     cursor = conexao.cursor()
 
     try:
-      
+
         if quantidade_parcelas <= 1:
             return False, "quantidade_invalida"
 
@@ -2837,7 +2878,7 @@ def adicionar_compra_parcelada_cartao(
 
                 fatura_id = cursor.lastrowid
 
-            
+
             else:
                 fatura_id, paga = fatura
 
@@ -2970,7 +3011,7 @@ def adicionar_compra_parcelada_cartao(
         raise
 
     finally:
-        conexao.close()    
+        conexao.close()
 
 def calcular_limite_utilizado(cartao_id):
     conexao = sqlite3.connect(obter_caminho_banco())
@@ -3017,7 +3058,7 @@ def calcular_limite_utilizado(cartao_id):
         )
 
     finally:
-        conexao.close()       
+        conexao.close()
 
 def calcular_limite_disponivel(cartao_id):
     conexao = sqlite3.connect(obter_caminho_banco())
@@ -3047,7 +3088,7 @@ def calcular_limite_disponivel(cartao_id):
         )
 
     finally:
-        conexao.close()         
+        conexao.close()
 
 def obter_dashboard():
     conexao = sqlite3.connect(obter_caminho_banco())
@@ -3110,7 +3151,7 @@ def obter_dashboard():
             )
 
         limite_disponivel = limite_total - limite_utilizado
-        
+
         # ==============================
         # INDICADORES
         # ==============================
@@ -3201,7 +3242,7 @@ def obter_dashboard():
                     percentual_limite_utilizado,
                     2
                 )
- 
+
         }
 
     finally:
@@ -3381,7 +3422,7 @@ def obter_evolucao_anual(ano):
         return evolucao
 
     finally:
-        conexao.close()        
+        conexao.close()
 
 def obter_comparacao_mensal(ano, mes):
     # Descobre o mês anterior
@@ -3642,7 +3683,7 @@ def obter_gastos_cartao_por_categoria(
         try:
             conexao.close()
         except:
-            pass       
+            pass
 
 def obter_compromisso_faturas_cartao(cartao_id):
     conexao = sqlite3.connect(obter_caminho_banco())
@@ -3805,7 +3846,7 @@ def obter_projecao_faturas(cartao_id, quantidade_meses=6):
         return projecao
 
     finally:
-        conexao.close()     
+        conexao.close()
 
 
 
