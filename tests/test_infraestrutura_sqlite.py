@@ -11,6 +11,11 @@ import banco
 
 class TestInfraestruturaSQLite(unittest.TestCase):
     def setUp(self):
+        # Exercita o executor com o catalogo minimo da etapa 1.
+        # O catalogo completo de producao e validado em test_esquema_hibrido.py.
+        catalogo = patch.object(banco, "MIGRACOES", banco.MIGRACOES[:1])
+        catalogo.start()
+        self.addCleanup(catalogo.stop)
         pasta = tempfile.TemporaryDirectory()
         self.addCleanup(pasta.cleanup)
         self.caminho = Path(pasta.name) / "infraestrutura.db"

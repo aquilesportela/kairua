@@ -26,10 +26,64 @@ _TABELA_MIGRACOES = """
     )
 """
 
+# Esquema aditivo: nao reconhece eventos nem liquida valores legados.
+_ESQUEMA_FINANCEIRO_HIBRIDO = (
+    """
+    CREATE TABLE eventos_financeiros (
+        id INTEGER PRIMARY KEY,
+        tipo TEXT NOT NULL CHECK (tipo IN ('receita', 'despesa')),
+        descricao TEXT NOT NULL CHECK (length(trim(descricao)) > 0),
+        categoria_id INTEGER NOT NULL REFERENCES categorias(id) ON DELETE RESTRICT,
+        valor_centavos INTEGER NOT NULL
+            CHECK (typeof(valor_centavos) = 'integer' AND valor_centavos > 0),
+        data_competencia TEXT,
+        situacao_competencia TEXT NOT NULL
+            CHECK (situacao_competencia IN ('confirmada', 'estimada', 'pendente')),
+        chave_origem TEXT NOT NULL UNIQUE CHECK (length(trim(chave_origem)) > 0),
+        compra_cartao_id INTEGER UNIQUE REFERENCES compras_cartao(id) ON DELETE RESTRICT,
+        parcelamento_id INTEGER UNIQUE REFERENCES parcelamentos(id) ON DELETE RESTRICT,
+        parcela_comum_id INTEGER UNIQUE REFERENCES parcelamento_parcelas(id) ON DELETE RESTRICT,
+        ocorrencia_id INTEGER UNIQUE REFERENCES recorrencia_ocorrencias(id) ON DELETE RESTRICT,
+        lancamento_legado_id INTEGER UNIQUE REFERENCES lancamentos(id) ON DELETE RESTRICT,
+        CHECK (
+            (compra_cartao_id IS NOT NULL) + (parcelamento_id IS NOT NULL)
+            + (parcela_comum_id IS NOT NULL) + (ocorrencia_id IS NOT NULL)
+            + (lancamento_legado_id IS NOT NULL) <= 1
+        ),
+        CHECK (
+            (situacao_competencia = 'pendente' AND data_competencia IS NULL)
+            OR
+            (situacao_competencia IN ('confirmada', 'estimada')
+             AND data_competencia IS NOT NULL
+             AND length(data_competencia) = 10
+             AND data_competencia GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+             AND substr(data_competencia, 1, 4) >= '0001'
+             AND date(data_competencia, '+0 days') IS NOT NULL
+             AND date(data_competencia, '+0 days') = data_competencia)
+        )
+    )
+    """,
+    """
+    CREATE TABLE liquidacoes_eventos (
+        id INTEGER PRIMARY KEY,
+        evento_id INTEGER NOT NULL REFERENCES eventos_financeiros(id) ON DELETE RESTRICT,
+        lancamento_id INTEGER NOT NULL REFERENCES lancamentos(id) ON DELETE RESTRICT,
+        valor_centavos INTEGER NOT NULL
+            CHECK (typeof(valor_centavos) = 'integer' AND valor_centavos > 0),
+        UNIQUE (evento_id, lancamento_id)
+    )
+    """,
+    "CREATE INDEX idx_eventos_competencia ON eventos_financeiros(data_competencia)",
+    "CREATE INDEX idx_eventos_categoria_competencia ON eventos_financeiros(categoria_id, data_competencia)",
+    "CREATE INDEX idx_liquidacoes_lancamento ON liquidacoes_eventos(lancamento_id)",
+)
+
+
 # Catalogo aditivo: nunca editar uma versao ja publicada.
 # As migracoes antigas permanecem independentes; nao ha baseline implicito.
 MIGRACOES = (
     (1, "controle_de_versoes", ()),
+    (2, "esquema_financeiro_hibrido", _ESQUEMA_FINANCEIRO_HIBRIDO),
 )
 
 
@@ -95,6 +149,77 @@ def _autorizar_sql_migracao(acao, argumento1, argumento2, banco, origem):
     return sqlite3.SQLITE_OK
 
 
+def _validar_dependencias_hibridas(conexao, instrucoes):
+    """Usa o parser e o validador de FKs do SQLite, sem persistir sondagens."""
+    def identificador(nome):
+        return '"' + nome.replace('"', '""') + '"'
+
+    conexao.execute("SAVEPOINT validar_dependencias_hibridas")
+    try:
+        anteriores = {r[0] for r in conexao.execute(
+            "SELECT name FROM temp.sqlite_master WHERE type = 'table'"
+        )}
+        # Contrato restrito ao DDL CREATE TABLE deste catalogo. Apenas troca
+        # o schema de criacao; nomes, colunas e FKs sao interpretados pelo SQLite.
+        for sql in instrucoes:
+            ddl = sql.lstrip()
+            if ddl.upper().startswith("CREATE TABLE "):
+                conexao.execute("CREATE TEMP TABLE " + ddl[len("CREATE TABLE "):])
+        novas = {r[0] for r in conexao.execute(
+            "SELECT name FROM temp.sqlite_master WHERE type = 'table'"
+        )} - anteriores
+        dependencias = set()
+        for tabela in novas:
+            grupos = {}
+            for fk in conexao.execute(
+                "SELECT id, seq, \"table\", \"to\" FROM pragma_foreign_key_list(?, 'temp')",
+                (tabela,)
+            ):
+                grupos.setdefault((fk[0], fk[2]), []).append((fk[1], fk[3]))
+            for (_, pai), colunas in grupos.items():
+                if pai.casefold() not in {n.casefold() for n in novas}:
+                    dependencias.add((pai, tuple(c for _, c in sorted(colunas))))
+        if not novas or not dependencias:
+            raise ValueError("DDL sem dependencias identificaveis.")
+
+        sonda = "__kairua_validacao_chave_fk"
+        if conexao.execute("SELECT 1 FROM main.sqlite_master WHERE name = ? COLLATE NOCASE",
+                           (sonda,)).fetchone():
+            raise ValueError("Nome de sondagem ocupado no esquema legado.")
+        for pai, colunas in sorted(dependencias):
+            registro = conexao.execute(
+                "SELECT type FROM main.sqlite_master WHERE name = ? COLLATE NOCASE", (pai,)
+            ).fetchone()
+            if registro != ("table",):
+                raise ValueError(f"Tabela obrigatoria ausente ou invalida: {pai}.")
+            existentes = {r[1].casefold() for r in conexao.execute(
+                "SELECT * FROM pragma_table_xinfo(?, 'main')", (pai,)
+            )}
+            if any(c is None or c.casefold() not in existentes for c in colunas):
+                raise ValueError(f"Colunas referenciadas ausentes: {pai}{colunas}.")
+            locais = ', '.join(identificador(f"c{i}") for i in range(len(colunas)))
+            alvos = ', '.join(identificador(c) for c in colunas)
+            conexao.execute(
+                f"CREATE TABLE main.{identificador(sonda)} ({locais}, "
+                f"FOREIGN KEY ({locais}) REFERENCES {identificador(pai)} ({alvos}))"
+            )
+            # Verifica PK/UNIQUE, colunas, cardinalidade e collations mesmo com
+            # foreign_keys OFF, sem inserir nem consultar registros legados.
+            conexao.execute(f"PRAGMA main.foreign_key_check({identificador(sonda)})").fetchall()
+            conexao.execute(f"DROP TABLE main.{identificador(sonda)}")
+    except (sqlite3.DatabaseError, ValueError) as erro:
+        raise ValueError(f"Esquema legado incompativel para migracao 2: {erro}") from erro
+    finally:
+        conexao.execute("ROLLBACK TO validar_dependencias_hibridas")
+        conexao.execute("RELEASE validar_dependencias_hibridas")
+
+
+# Extensao minima: pre-condicoes confiaveis, fora do SQL restrito do catalogo.
+_PRECONDICOES_MIGRACOES = {
+    (2, "esquema_financeiro_hibrido"): _validar_dependencias_hibridas,
+}
+
+
 def aplicar_migracoes(destino=None):
     """Aplica cada versao atomicamente em destino explicito e validado.
 
@@ -123,6 +248,9 @@ def aplicar_migracoes(destino=None):
             if historico != esperado:
                 raise ValueError("Historico de migracoes nao e um prefixo do catalogo.")
             if versao not in {v for v, _ in historico}:
+                precondicao = _PRECONDICOES_MIGRACOES.get((versao, nome))
+                if precondicao is not None:
+                    precondicao(conexao, instrucoes)
                 # A versao 1 cria apenas o controle, ja criado pelo bootstrap.
                 # Toda instrucao do catalogo ainda passa pelo autorizador.
                 conexao.set_authorizer(_autorizar_sql_migracao)
