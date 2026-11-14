@@ -1,4 +1,4 @@
-
+﻿
 import os
 import sqlite3
 import tempfile
@@ -28,15 +28,24 @@ class TestParcelamentos(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+
         banco.criar_banco()
         banco.criar_categorias()
+        banco.migrar_categorias()
+        banco.migrar_lancamentos_parcelamento()
+
         banco.criar_parcelamentos()
+        banco.criar_recorrencias()
+
+        banco.criar_cartoes()
+        banco.criar_faturas()
+
 
         categorias = banco.listar_categorias("despesa")
         self.categoria_id = next(
             categoria[0]
             for categoria in categorias
-            if categoria[1] == "Alimentação"
+            if categoria[1] == "AlimentaÃ§Ã£o"
         )
 
     def test_cadastro_parcelamento_tres_parcelas(self):
@@ -704,7 +713,7 @@ class TestParcelamentos(unittest.TestCase):
                     "2026-11-10",
                     "Parcela vinculada",
                     "despesa",
-                    "Alimentação",
+                    "AlimentaÃ§Ã£o",
                     200.00
                 )
             )
@@ -811,6 +820,234 @@ class TestParcelamentos(unittest.TestCase):
 
         self.assertEqual(quantidade_parcelamentos, 1)
         self.assertEqual(quantidade_parcelas, 3)
+
+    def test_marcar_parcela_paga_sem_duplicidade(self):
+        parcelamento_id = banco.adicionar_parcelamento(
+            descricao="Notebook",
+            tipo="despesa",
+            categoria_id=self.categoria_id,
+            valor_total=600.00,
+            quantidade_parcelas=3,
+            data_inicio="2026-11-10"
+        )
+
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            parcela_id = conexao.execute(
+                """
+                SELECT id
+                FROM parcelamento_parcelas
+                WHERE parcelamento_id = ?
+                  AND numero_parcela = 1
+                """,
+                (parcelamento_id,)
+            ).fetchone()[0]
+
+        # Primeiro pagamento
+        resultado = banco.marcar_parcela_paga(
+            parcela_id,
+            "2026-11-10"
+        )
+
+        self.assertTrue(resultado)
+
+        # Segundo pagamento deve ser recusado
+        resultado_repetido = banco.marcar_parcela_paga(
+            parcela_id,
+            "2026-11-10"
+        )
+
+        self.assertFalse(resultado_repetido)
+
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            parcela = conexao.execute(
+                """
+                SELECT pago, data_pagamento, lancamento_id
+                FROM parcelamento_parcelas
+                WHERE id = ?
+                """,
+                (parcela_id,)
+            ).fetchone()
+
+            quantidade_lancamentos = conexao.execute(
+                """
+                SELECT COUNT(*)
+                FROM lancamentos
+                WHERE parcelamento_id = ?
+                """,
+                (parcelamento_id,)
+            ).fetchone()[0]
+
+        self.assertEqual(parcela[0], 1)
+        self.assertEqual(parcela[1], "2026-11-10")
+        self.assertIsNotNone(parcela[2])
+        self.assertEqual(quantidade_lancamentos, 1)
+
+    def test_rollback_falha_pagamento_parcela(self):
+        parcelamento_id = banco.adicionar_parcelamento(
+            descricao="Notebook",
+            tipo="despesa",
+            categoria_id=self.categoria_id,
+            valor_total=600.00,
+            quantidade_parcelas=3,
+            data_inicio="2026-11-10"
+        )
+
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            parcela_id = conexao.execute(
+                """
+                SELECT id
+                FROM parcelamento_parcelas
+                WHERE parcelamento_id = ?
+                  AND numero_parcela = 1
+                """,
+                (parcelamento_id,)
+            ).fetchone()[0]
+
+            # Simula falha na criacao do lancamento
+            conexao.execute("""
+                CREATE TRIGGER impedir_lancamento_parcela
+                BEFORE INSERT ON lancamentos
+                BEGIN
+                    SELECT RAISE(ABORT, 'falha simulada');
+                END;
+            """)
+            conexao.commit()
+
+        with self.assertRaises(sqlite3.DatabaseError):
+            banco.marcar_parcela_paga(
+                parcela_id,
+                "2026-11-10"
+            )
+
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            parcela = conexao.execute(
+                """
+                SELECT pago, data_pagamento, lancamento_id
+                FROM parcelamento_parcelas
+                WHERE id = ?
+                """,
+                (parcela_id,)
+            ).fetchone()
+
+            quantidade_lancamentos = conexao.execute(
+                """
+                SELECT COUNT(*)
+                FROM lancamentos
+                WHERE parcelamento_id = ?
+                """,
+                (parcelamento_id,)
+            ).fetchone()[0]
+
+        self.assertEqual(parcela[0], 0)
+        self.assertIsNone(parcela[1])
+        self.assertIsNone(parcela[2])
+        self.assertEqual(quantidade_lancamentos, 0)
+
+    def test_dashboard_pagamento_parcelamento(self):
+        parcelamento_id = banco.adicionar_parcelamento(
+            descricao="Notebook",
+            tipo="despesa",
+            categoria_id=self.categoria_id,
+            valor_total=600.00,
+            quantidade_parcelas=3,
+            data_inicio="2026-11-10"
+        )
+
+        dashboard_antes = banco.obter_dashboard()
+
+        self.assertEqual(
+            dashboard_antes["parcelamentos_abertos"],
+            600.00
+        )
+        self.assertEqual(dashboard_antes["despesas"], 0.00)
+        self.assertEqual(dashboard_antes["saldo"], 0.00)
+
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            parcela_id = conexao.execute(
+                """
+                SELECT id
+                FROM parcelamento_parcelas
+                WHERE parcelamento_id = ?
+                  AND numero_parcela = 1
+                """,
+                (parcelamento_id,)
+            ).fetchone()[0]
+
+        resultado = banco.marcar_parcela_paga(
+            parcela_id,
+            "2026-11-10"
+        )
+
+        self.assertTrue(resultado)
+
+        dashboard_depois = banco.obter_dashboard()
+
+        self.assertEqual(
+            dashboard_depois["parcelamentos_abertos"],
+            400.00
+        )
+        self.assertEqual(dashboard_depois["despesas"], 200.00)
+        self.assertEqual(dashboard_depois["saldo"], -200.00)
+        self.assertEqual(dashboard_depois["receitas"], 0.00)
+
+    def test_evolucao_anual_pagamento_parcela(self):
+        parcelamento_id = banco.adicionar_parcelamento(
+            descricao="Notebook",
+            tipo="despesa",
+            categoria_id=self.categoria_id,
+            valor_total=600.00,
+            quantidade_parcelas=3,
+            data_inicio="2026-11-10"
+        )
+
+        with closing(sqlite3.connect(self.caminho_banco)) as conexao:
+            parcela_id = conexao.execute(
+                """
+                SELECT id
+                FROM parcelamento_parcelas
+                WHERE parcelamento_id = ?
+                  AND numero_parcela = 1
+                """,
+                (parcelamento_id,)
+            ).fetchone()[0]
+
+        # Antes do pagamento, nao deve existir despesa
+        evolucao_antes = banco.obter_evolucao_anual(2026)
+
+        self.assertEqual(len(evolucao_antes), 12)
+
+        for mes in evolucao_antes:
+            self.assertEqual(mes["receitas"], 0.00)
+            self.assertEqual(mes["despesas"], 0.00)
+            self.assertEqual(mes["saldo"], 0.00)
+
+        # Parcela vence em novembro, mas e paga em dezembro
+        resultado = banco.marcar_parcela_paga(
+            parcela_id,
+            "2026-12-05"
+        )
+
+        self.assertTrue(resultado)
+
+        evolucao_depois = banco.obter_evolucao_anual(2026)
+
+        novembro = evolucao_depois[10]
+        dezembro = evolucao_depois[11]
+
+        self.assertEqual(novembro["mes"], 11)
+        self.assertEqual(novembro["despesas"], 0.00)
+        self.assertEqual(novembro["saldo"], 0.00)
+
+        self.assertEqual(dezembro["mes"], 12)
+        self.assertEqual(dezembro["receitas"], 0.00)
+        self.assertEqual(dezembro["despesas"], 200.00)
+        self.assertEqual(dezembro["saldo"], -200.00)
+
+        # Nao deve haver despesa em outros meses
+        self.assertEqual(
+            sum(mes["despesas"] for mes in evolucao_depois),
+            200.00
+        )
 
 
 if __name__ == "__main__":
