@@ -5,6 +5,7 @@ import os
 import stat
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
+from migracao_3 import SQL_MIGRACAO_3, ALTERS_COM_CHECK_MIGRACAO_3, validar_migracao_3
 
 def obter_caminho_banco():
     return os.environ.get(
@@ -84,6 +85,7 @@ _ESQUEMA_FINANCEIRO_HIBRIDO = (
 MIGRACOES = (
     (1, "controle_de_versoes", ()),
     (2, "esquema_financeiro_hibrido", _ESQUEMA_FINANCEIRO_HIBRIDO),
+    (3, "contrato_operacoes_hibridas", SQL_MIGRACAO_3),
 )
 
 
@@ -217,7 +219,25 @@ def _validar_dependencias_hibridas(conexao, instrucoes):
 # Extensao minima: pre-condicoes confiaveis, fora do SQL restrito do catalogo.
 _PRECONDICOES_MIGRACOES = {
     (2, "esquema_financeiro_hibrido"): _validar_dependencias_hibridas,
+    (3, "contrato_operacoes_hibridas"): lambda conexao, instrucoes: validar_migracao_3(
+        conexao, instrucoes, _ESQUEMA_FINANCEIRO_HIBRIDO
+    ),
 }
+
+
+def _autorizar_instrucao_migracao(versao, nome, instrucao):
+    tabela = None
+    if (versao, nome) == (3, "contrato_operacoes_hibridas"):
+        tabela = ALTERS_COM_CHECK_MIGRACAO_3.get(instrucao)
+
+    def autorizar(acao, argumento1, argumento2, banco, origem):
+        if (tabela is not None and acao == sqlite3.SQLITE_PRAGMA
+                and argumento1 == "quick_check" and argumento2 == tabela
+                and banco == "main" and origem is None):
+            return sqlite3.SQLITE_OK
+        return _autorizar_sql_migracao(acao, argumento1, argumento2, banco, origem)
+
+    return autorizar
 
 
 def aplicar_migracoes(destino=None):
@@ -253,9 +273,9 @@ def aplicar_migracoes(destino=None):
                     precondicao(conexao, instrucoes)
                 # A versao 1 cria apenas o controle, ja criado pelo bootstrap.
                 # Toda instrucao do catalogo ainda passa pelo autorizador.
-                conexao.set_authorizer(_autorizar_sql_migracao)
                 try:
                     for instrucao in instrucoes:
+                        conexao.set_authorizer(_autorizar_instrucao_migracao(versao, nome, instrucao))
                         conexao.execute(instrucao)
                 finally:
                     conexao.set_authorizer(None)

@@ -11,6 +11,10 @@ import banco
 
 class TestEsquemaHibrido(unittest.TestCase):
     def setUp(self):
+        # Contratos e fixtures da etapa 2 permanecem isolados das etapas posteriores.
+        catalogo = patch.object(banco, "MIGRACOES", banco.MIGRACOES[:2])
+        catalogo.start()
+        self.addCleanup(catalogo.stop)
         pasta = tempfile.TemporaryDirectory()
         self.addCleanup(pasta.cleanup)
         self.caminho = Path(pasta.name) / "hibrido_teste.db"

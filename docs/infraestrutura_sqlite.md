@@ -1,5 +1,8 @@
 # Infraestrutura SQLite
 
+A etapa 3.1B está documentada em [migração 3](migracao_3.md), incluindo a
+exceção restrita de autorização para a verificação interna de CHECKs no SQLite.
+
 `banco.abrir_conexao()` resolve `KAIRUA_DB_PATH` a cada chamada e preserva
 as opções padrão de conexão. O chamador continua responsável por transações
 e fechamento. Não há migração automática ao abrir conexões ou importar `banco`.
