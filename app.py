@@ -81,6 +81,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt
+from interface_eventos import menu_eventos_financeiros
 
 console = Console()
 
@@ -5919,6 +5920,7 @@ def menu_principal():
                 ("3", "Relatórios"),
                 ("4", "Categorias"),
                 ("5", "Cartões"),
+                ("6", "Eventos financeiros"),
                 ("0", "Sair")
             ]
         )
@@ -5941,6 +5943,9 @@ def menu_principal():
 
         elif opcao == "5":
             menu_cartoes()
+
+        elif opcao == "6":
+            menu_eventos_financeiros()
 
         elif opcao == "0":
             console.print(
