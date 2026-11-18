@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import banco
 import servicos_financeiros as sf
+import consultas_eventos as consultas
 from intencoes_financeiras import ArmazenamentoIntencoes, ErroIntencao
 
 
@@ -35,6 +36,100 @@ def interpretar_data_brasileira(texto):
         return date(ano, mes, dia)
     except ValueError as erro:
         raise sf.DataInvalida('Data inexistente.') from erro
+
+
+def formatar_centavos(valor):
+    """Aceita também totais brutos acima de int64, sem conversão para REAL."""
+    if type(valor) is not int:
+        raise sf.ValorInvalido('Use centavos inteiros na apresentação.')
+    magnitude = abs(valor)
+    reais = format(magnitude // 100, ',').replace(',', '.')
+    return f'R$ {"-" if valor < 0 else ""}{reais},{magnitude % 100:02d}'
+
+
+def _mostrar_liquidacao(q, saida):
+    saida(f'Liquidação #{q.id} — evento #{q.evento_id}, caixa original #{q.lancamento_id}, operação #{q.operacao_id}')
+    saida(f'Tipo econômico: {q.tipo}. Data do caixa: {q.data_caixa:%d/%m/%Y}')
+    saida(f'Categoria histórica do caixa: {q.categoria_historica.id} — {q.categoria_historica.nome}')
+    saida(f'Valor originalmente alocado: {formatar_centavos(q.valor_original_centavos)}')
+    saida(f'Valor integral do caixa (não somar por vínculo): {formatar_centavos(q.valor_caixa_centavos)}')
+    saida(f'Total estornado: {formatar_centavos(q.total_estornado_centavos)}')
+    saida(f'Saldo estornável: {formatar_centavos(q.saldo_estornavel_centavos)}')
+    if not q.estornos:
+        saida('Nenhum estorno vinculado.')
+    for s in q.estornos:
+        saida(f'ESTORNO #{s.id} — liquidação #{s.liquidacao_id}, caixa negativo #{s.lancamento_id}, '
+              f'operação #{s.operacao_id}: {formatar_centavos(s.valor_centavos)}')
+        saida(f'Data: {s.data:%d/%m/%Y}. Natureza: {s.natureza}. Motivo: {s.motivo}')
+        saida(f'Categoria histórica: {s.categoria_historica.id} — {s.categoria_historica.nome}')
+    saida('Elegibilidade informativa para estorno: ' + ('sim' if q.elegivel_estorno else 'não'))
+
+
+def _mostrar_evento(e, saida):
+    saida(f'Evento #{e.id} — {e.tipo}: {e.descricao}')
+    saida(f'Competência: {e.data_competencia:%d/%m/%Y}. Vencimento: {e.data_vencimento:%d/%m/%Y}')
+    saida(f'Categoria corrente: {e.categoria_atual.id} — {e.categoria_atual.nome}')
+    for rotulo, valor in (
+        ('Valor original de competência', e.valor_original_centavos),
+        ('Total liquidado bruto', e.total_liquidado_bruto_centavos),
+        ('Total estornado', e.total_estornado_centavos),
+        ('Total liquidado líquido', e.total_liquidado_liquido_centavos),
+        ('Saldo aberto', e.saldo_aberto_centavos),
+    ):
+        saida(f'{rotulo}: {formatar_centavos(valor)}')
+    if e.reversao:
+        saida(f'EVENTO REVERTIDO — reversão #{e.reversao.id} em {e.reversao.data:%d/%m/%Y}. '
+              'Compromisso cancelado; competência original preservada.')
+    if not e.liquidacoes:
+        saida('Nenhuma liquidação ou movimentação de caixa vinculada.')
+    for q in e.liquidacoes:
+        _mostrar_liquidacao(q, saida)
+
+
+def menu_consultas_eventos(*, entrada=input, saida=print):
+    while True:
+        saida('Consulta de eventos e liquidações — somente leitura\n'
+              '1 - Listar eventos com saldo aberto\n2 - Detalhar evento por ID\n'
+              '3 - Listar liquidações com saldo estornável\n4 - Detalhar liquidação por ID\n0 - Voltar')
+        try:
+            opcao = entrada('Opção: ').strip()
+            if opcao == '0':
+                return
+            if opcao == '1':
+                eventos = consultas.listar_eventos_liquidaveis()
+                if not eventos:
+                    saida('Nenhum evento elegível com saldo aberto.')
+                for e in eventos:
+                    saida(f'#{e.id} | {e.tipo} | {e.descricao} | competência {e.data_competencia:%d/%m/%Y} | '
+                          f'vencimento {e.data_vencimento:%d/%m/%Y} | {e.categoria_atual.nome} | '
+                          f'saldo aberto {formatar_centavos(e.saldo_aberto_centavos)}')
+            elif opcao == '3':
+                liquidacoes = consultas.listar_liquidacoes_estornaveis()
+                if not liquidacoes:
+                    saida('Nenhuma liquidação elegível com saldo estornável.')
+                for q in liquidacoes:
+                    _mostrar_liquidacao(q, saida)
+            elif opcao in ('2', '4'):
+                identificador = int(entrada('ID (0 para cancelar): '))
+                if identificador == 0:
+                    continue
+                if opcao == '2':
+                    detalhe = consultas.obter_detalhe_evento(identificador)
+                    _mostrar_evento(detalhe, saida)
+                else:
+                    detalhe = consultas.obter_detalhe_liquidacao(identificador)
+                    _mostrar_liquidacao(detalhe, saida)
+            else:
+                saida('Opção inválida.')
+        except (EOFError, KeyboardInterrupt):
+            saida('Consulta encerrada. Nenhum dado foi modificado.')
+            return
+        except sf.EsquemaIncompativel:
+            saida('Esquema híbrido indisponível ou incompatível; nenhuma migração foi executada.')
+        except sf.OperacaoIncompleta as erro:
+            saida(f'Inconsistência financeira detectada: {erro} Nenhum saldo foi presumido ou reparado.')
+        except (sf.ErroFinanceiro, ValueError, OSError) as erro:
+            saida(f'Consulta não realizada: {erro}')
 
 
 def listar_categorias(tipo):
@@ -129,7 +224,8 @@ def menu_eventos_financeiros(*, entrada=input, saida=print, armazenamento=None):
     while True:
         chave = None
         saida('Eventos financeiros\n1 - Registrar evento manual\n'
-              '2 - Consultar operações pendentes ou incertas\n3 - Recuperar resultado de operação\n0 - Voltar')
+              '2 - Consultar operações pendentes ou incertas\n3 - Recuperar resultado de operação\n'
+              '4 - Consultar eventos e liquidações\n0 - Voltar')
         try:
             opcao = entrada('Opção: ').strip()
             if opcao == '0':
@@ -149,6 +245,8 @@ def menu_eventos_financeiros(*, entrada=input, saida=print, armazenamento=None):
                 saida(r['payload'])
                 if entrada('Digite SIM para recuperar: ').strip() == 'SIM':
                     _recibo(diario.executar(chave), saida)
+            elif opcao == '4':
+                menu_consultas_eventos(entrada=entrada, saida=saida)
             else:
                 saida('Opção inválida.')
         except (EOFError, KeyboardInterrupt):
