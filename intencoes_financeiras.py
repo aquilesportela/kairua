@@ -9,7 +9,6 @@ Não remover intenções incertas. Backup deve incluir este diretório.
 """
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import date
 from hashlib import sha256
 import json
 import os
@@ -22,6 +21,29 @@ import servicos_financeiros as sf
 
 class ErroIntencao(Exception):
     """Falha local: não autoriza criar outra chave nem afirmar sucesso."""
+
+
+# Catálogo da interface, não de todos os serviços do motor. Não usar getattr
+# sobre nomes recebidos do JSON. Envelope e versão 1 da 3.3B são preservados.
+_PERFIS = {
+    'registrar_evento_manual': ('registrar_evento', ('data_competencia', 'data_vencimento'), (1, 0, 0, 0, 0, 0)),
+    'registrar_operacao_imediata': ('registrar_imediata',
+        ('data_competencia', 'data_vencimento', 'data_liquidacao'), (1, 1, 1, 0, 0, 0)),
+}
+_CAMPOS_IDS = ('evento_ids', 'lancamento_ids', 'liquidacao_ids',
+               'estorno_ids', 'reversao_ids', 'reclassificacao_ids')
+
+
+def _perfil(nome):
+    if type(nome) is not str or nome not in _PERFIS:
+        raise ErroIntencao('Serviço não autorizado no diário da interface.')
+    return _PERFIS[nome]
+
+
+def servico_da_intencao(registro):
+    nome = json.loads(registro['payload'])['servico']
+    _perfil(nome)
+    return nome
 
 
 def destino_configurado():
@@ -38,8 +60,8 @@ def diretorio_padrao():
 
 def parametros_da_intencao(registro):
     p = json.loads(registro['payload'])['parametros']
-    for campo in ('data_competencia', 'data_vencimento'):
-        p[campo] = date.fromisoformat(p[campo])
+    for campo in _perfil(servico_da_intencao(registro))[1]:
+        p[campo] = sf.interpretar_data_iso(p[campo])
     return p
 
 
@@ -48,18 +70,18 @@ def _json(dados):
                       separators=(',', ':'), allow_nan=False)
 
 
-def conferir_recibo(recibo, chave):
+def conferir_recibo(recibo, chave, *, nome_servico='registrar_evento_manual'):
+    tipo, _, contagens = _perfil(nome_servico)
     if (type(recibo) is not sf.ResultadoOperacao or recibo.chave != chave
-            or recibo.tipo_operacao != 'registrar_evento'
+            or recibo.tipo_operacao != tipo
             or type(recibo.versao_contrato) is not int or recibo.versao_contrato != 1
-            or type(recibo.operacao_id) is not int or not 1 <= recibo.operacao_id <= sf.MAX_CENTAVOS
-            or type(recibo.evento_ids) is not tuple or len(recibo.evento_ids) != 1
-            or type(recibo.evento_ids[0]) is not int
-            or not 1 <= recibo.evento_ids[0] <= sf.MAX_CENTAVOS
-            or any(getattr(recibo, campo) != () for campo in (
-                'lancamento_ids', 'liquidacao_ids', 'estorno_ids',
-                'reversao_ids', 'reclassificacao_ids'))):
-        raise ErroIntencao('Recibo incompatível com cadastro sem caixa.')
+            or type(recibo.operacao_id) is not int or not 1 <= recibo.operacao_id <= sf.MAX_CENTAVOS):
+        raise ErroIntencao('Recibo incompatível com a intenção registrada.')
+    for campo, quantidade in zip(_CAMPOS_IDS, contagens):
+        ids = getattr(recibo, campo)
+        if (type(ids) is not tuple or len(ids) != quantidade
+                or any(type(i) is not int or not 1 <= i <= sf.MAX_CENTAVOS for i in ids)):
+            raise ErroIntencao('Cardinalidade ou identificador incompatível no recibo.')
     return asdict(recibo)
 
 
@@ -100,7 +122,8 @@ class ArmazenamentoIntencoes:
                 raise ValueError('Campos inválidos')
             if type(r['versao']) is not int or r['versao'] != 1 or r['destino'] != self.destino:
                 raise ValueError('Versão ou destino incompatível')
-            req = sf.canonicalizar_requisicao('registrar_evento_manual', chave=r['chave'],
+            nome_servico = servico_da_intencao(r)
+            req = sf.canonicalizar_requisicao(nome_servico, chave=r['chave'],
                                               **parametros_da_intencao(r))
             if req.requisicao_canonica != r['payload']:
                 raise ValueError('Payload não canônico')
@@ -117,7 +140,7 @@ class ArmazenamentoIntencoes:
                 for k in ('evento_ids', 'lancamento_ids', 'liquidacao_ids', 'estorno_ids',
                           'reversao_ids', 'reclassificacao_ids'):
                     campos[k] = tuple(campos[k])
-                conferir_recibo(sf.ResultadoOperacao(**campos), r['chave'])
+                conferir_recibo(sf.ResultadoOperacao(**campos), r['chave'], nome_servico=nome_servico)
             elif r['recibo'] is not None:
                 raise ValueError('Recibo sem confirmação')
             return r
@@ -155,8 +178,9 @@ class ArmazenamentoIntencoes:
             if temporario is not None:
                 temporario.unlink(missing_ok=True)
 
-    def criar(self, *, chave, **parametros):
-        req = sf.canonicalizar_requisicao('registrar_evento_manual', chave=chave, **parametros)
+    def criar(self, *, chave, servico='registrar_evento_manual', **parametros):
+        _perfil(servico)
+        req = sf.canonicalizar_requisicao(servico, chave=chave, **parametros)
         with self._bloqueio('.diario.lock'):
             if self._caminho(chave).exists():
                 r = self._ler(chave)
@@ -190,20 +214,28 @@ class ArmazenamentoIntencoes:
         permanece recuperável. Não existe transação distribuída JSON/SQLite:
         falha após commit é recuperada pelo replay do serviço aprovado.
         """
-        servico = servico if servico is not None else sf.registrar_evento_manual
         if destino_configurado() != self.destino:
             raise ErroIntencao('Banco configurado mudou; recuperação bloqueada.')
         sf.validar_chave(chave)
         with self._bloqueio('.exec-' + chave[10:] + '.lock'):
             r = self.obter(chave)
+            if destino_configurado() != self.destino:
+                raise ErroIntencao('Banco configurado mudou durante a recuperação.')
+            nome_servico = servico_da_intencao(r)
+            # A injeção de callable é preservada para os testes de falha. Na
+            # produção o despacho é fechado e vem da intenção, não do menu.
+            executar = servico
+            if executar is None:
+                executar = (sf.registrar_evento_manual if nome_servico == 'registrar_evento_manual'
+                            else sf.registrar_operacao_imediata)
             if r['estado'] == 'rejeitada':
                 raise ErroIntencao('Intenção rejeitada definitivamente: ' + r['erro'])
             confirmado = r['estado'] == 'confirmada'
             if not confirmado:
                 self._atualizar(chave, estado='incerta', erro=None)
             try:
-                recibo = servico(chave=chave, **parametros_da_intencao(r))
-                serializado = conferir_recibo(recibo, chave)
+                recibo = executar(chave=chave, **parametros_da_intencao(r))
+                serializado = conferir_recibo(recibo, chave, nome_servico=nome_servico)
                 if confirmado and _json(serializado) != _json(r['recibo']):
                     raise ErroIntencao('Recibo recuperado diverge do recibo confirmado.')
             except Exception as erro:
@@ -216,5 +248,6 @@ class ArmazenamentoIntencoes:
                     estado = 'rejeitada' if r['estado'] == 'pendente' and isinstance(erro, definitivos) else 'incerta'
                     self._atualizar(chave, estado=estado, erro=type(erro).__name__)
                 raise
-            self._atualizar(chave, estado='confirmada', recibo=serializado, erro=None)
+            if not confirmado:
+                self._atualizar(chave, estado='confirmada', recibo=serializado, erro=None)
             return recibo

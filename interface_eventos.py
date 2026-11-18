@@ -5,6 +5,8 @@ Entradas/saídas injetáveis; somente registrar_evento_manual produz efeitos.
 """
 from contextlib import closing
 from datetime import date
+import json
+from pathlib import Path
 import re
 import sqlite3
 from uuid import uuid4
@@ -144,10 +146,64 @@ def listar_categorias(tipo):
         raise
 
 
-def _recibo(resultado, saida):
+def _recibo(resultado, saida, registro=None):
+    if resultado.tipo_operacao not in ('registrar_evento', 'registrar_imediata'):
+        raise ErroIntencao('Tipo de recibo não disponível nesta interface.')
     saida(f'Operação confirmada: {resultado.operacao_id}. Evento: {resultado.evento_ids[0]}.')
     saida(f'Chave de recuperação: {resultado.chave}')
-    saida('Competência registrada. Nenhuma movimentação de caixa ou liquidação foi criada.')
+    if resultado.tipo_operacao == 'registrar_evento':
+        saida('Competência registrada. Nenhuma movimentação de caixa ou liquidação foi criada.')
+    else:
+        saida(f'Evento criado: {resultado.evento_ids[0]}. Caixa criado: {resultado.lancamento_ids[0]}. '
+              f'Liquidação integral criada: {resultado.liquidacao_ids[0]}.')
+    if registro is not None:
+        # Dados originais da intenção, nunca joins com categorias correntes.
+        p = json.loads(registro['payload'])['parametros']
+        saida(f"Tipo econômico: {p['tipo']}. Valor original: {formatar_centavos(p['valor_centavos'])}.")
+        saida(f"Categoria original (ID): {p['categoria_id']}.")
+        for campo, rotulo in (('data_competencia', 'Competência'), ('data_vencimento', 'Vencimento'),
+                              ('data_liquidacao', 'Liquidação / caixa')):
+            if campo in p:
+                ano, mes, dia = p[campo].split('-')
+                saida(f'{rotulo}: {dia}/{mes}/{ano}')
+
+
+def permitir_alteracao_legada(lancamento_id, *, saida=print):
+    """Pré-checagem de UI, compatível com bases anteriores ao esquema híbrido.
+
+    Não inicializa/migra; os gatilhos permanecem a defesa contra corridas.
+    Falha de leitura ou estrutura parcialmente presente bloqueia a alteração.
+    """
+    try:
+        if type(lancamento_id) is not int or not -2**63 <= lancamento_id <= sf.MAX_CENTAVOS:
+            raise ValueError('ID inválido')
+        uri = Path(banco.obter_caminho_banco()).absolute().as_uri() + '?mode=ro'
+        with closing(sqlite3.connect(uri, uri=True, isolation_level=None)) as c:
+            c.row_factory = sqlite3.Row
+            c.execute('PRAGMA query_only=ON')
+            c.execute('BEGIN')
+            tabelas = {r[0].lower() for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            linha = c.execute('SELECT * FROM lancamentos WHERE id=?', (lancamento_id,)).fetchone()
+            if linha is None:
+                saida('Lançamento não encontrado; nenhuma alteração autorizada.')
+                return False
+            valores = {nome.lower(): linha[nome] for nome in linha.keys()}
+            protegido = any(valores.get(campo) is not None
+                            for campo in ('operacao_hibrida_id', 'valor_centavos'))
+            for tabela, campo in (('liquidacoes_eventos', 'lancamento_id'),
+                                  ('estornos_liquidacoes', 'lancamento_estorno_id'),
+                                  ('eventos_financeiros', 'lancamento_legado_id')):
+                if tabela in tabelas:
+                    vinculo = c.execute(f'SELECT 1 FROM {tabela} WHERE {campo}=? LIMIT 1', (lancamento_id,)).fetchone()
+                    protegido = protegido or vinculo is not None
+        if protegido:
+            saida('Lançamento vinculado ao fluxo financeiro híbrido: edição e exclusão legadas bloqueadas. '
+                  'Utilize o fluxo de Eventos financeiros para consultar e tratar seus vínculos.')
+            return False
+        return True
+    except (sqlite3.Error, ValueError, OSError):
+        saida('Não foi possível verificar a proteção do lançamento. Nenhuma alteração autorizada.')
+        return False
 
 
 def _falha(erro, saida, chave=None, armazenamento=None):
@@ -207,14 +263,66 @@ def registrar_manual(*, entrada=input, saida=print, armazenamento=None, categori
                  data_competencia=competencia, data_vencimento=vencimento, confirmar_ocorrencia=True)
         chave = 'kairua:v1:' + str(uuid4())
         diario = armazenamento if armazenamento is not None else ArmazenamentoIntencoes()
-        diario.criar(chave=chave, **p)
+        registro = diario.criar(chave=chave, **p)
         # A chave é exibida antes da chamada, inclusive se a resposta se perder.
         saida(f'Intenção persistida. Chave: {chave}')
-        _recibo(diario.executar(chave, servico=servico), saida)
+        _recibo(diario.executar(chave, servico=servico), saida, registro)
     except (EOFError, KeyboardInterrupt):
         saida('Entrada interrompida; consulte intenções pendentes antes de repetir o cadastro.')
     except (sf.ErroFinanceiro, ErroIntencao, OSError, ValueError, sqlite3.Error) as erro:
         _falha(erro, saida, chave, diario)
+    except Exception as erro:
+        _falha(erro, saida, chave, diario)
+
+
+def registrar_imediata(*, entrada=input, saida=print, armazenamento=None, categorias=None, servico=None):
+    chave = None
+    diario = armazenamento
+    try:
+        saida('Registrar competência e caixa com liquidação integral na mesma operação.')
+        tipo = entrada('Tipo (receita/despesa): ').strip().lower()
+        if tipo not in ('receita', 'despesa'):
+            raise sf.ParametroInvalido('Tipo deve ser receita ou despesa.')
+        descricao = sf.normalizar_texto(entrada('Descrição: '))
+        opcoes = (categorias or listar_categorias)(tipo)
+        if not opcoes:
+            saida('Não há categorias compatíveis cadastradas.')
+            return
+        for identificador, nome in opcoes:
+            saida(f'{identificador}: {nome}')
+        try:
+            categoria_id = int(entrada('ID da categoria: '))
+        except ValueError as erro:
+            raise sf.ParametroInvalido('ID de categoria inválido.') from erro
+        nomes = dict(opcoes)
+        if categoria_id not in nomes:
+            raise sf.CategoriaIncompativel('Selecione uma categoria da lista do tipo informado.')
+        valor = interpretar_valor_brasileiro(entrada('Valor (R$): '))
+        competencia = interpretar_data_brasileira(entrada('Competência (DD/MM/AAAA): '))
+        vencimento = interpretar_data_brasileira(entrada('Vencimento (DD/MM/AAAA): '))
+        liquidacao = interpretar_data_brasileira(entrada('Liquidação / caixa (DD/MM/AAAA): '))
+        saida(f'Tipo: {tipo}. Descrição: {descricao}. Valor: {formatar_centavos(valor)}.')
+        saida(f'Categoria selecionada: {categoria_id} — {nomes[categoria_id]}.')
+        for rotulo, data in (('Competência', competencia), ('Vencimento', vencimento), ('Liquidação / caixa', liquidacao)):
+            saida(f'{rotulo}: {data.day:02d}/{data.month:02d}/{data.year:04d}')
+        saida('Serão criados um evento de competência, um lançamento de caixa e uma liquidação integral.')
+        if entrada('Confirme a ocorrência econômica e o registro digitando SIM: ').strip() != 'SIM':
+            saida('Cadastro cancelado. Nenhuma intenção foi persistida.')
+            return
+        divergentes = competencia != liquidacao
+        if divergentes and entrada('Competência e caixa divergem. Digite SIM para confirmar essas datas: ').strip() != 'SIM':
+            saida('Cadastro cancelado. Datas divergentes não confirmadas.')
+            return
+        p = dict(tipo=tipo, descricao=descricao, categoria_id=categoria_id, valor_centavos=valor,
+                 data_competencia=competencia, data_vencimento=vencimento, data_liquidacao=liquidacao,
+                 confirmar_ocorrencia=True, confirmar_datas_divergentes=divergentes)
+        chave = 'kairua:v1:' + str(uuid4())
+        diario = armazenamento if armazenamento is not None else ArmazenamentoIntencoes()
+        registro = diario.criar(chave=chave, servico='registrar_operacao_imediata', **p)
+        saida(f'Intenção persistida. Chave: {chave}')
+        _recibo(diario.executar(chave, servico=servico), saida, registro)
+    except (EOFError, KeyboardInterrupt):
+        saida('Entrada interrompida; consulte intenções pendentes antes de repetir o cadastro.')
     except Exception as erro:
         _falha(erro, saida, chave, diario)
 
@@ -225,7 +333,7 @@ def menu_eventos_financeiros(*, entrada=input, saida=print, armazenamento=None):
         chave = None
         saida('Eventos financeiros\n1 - Registrar evento manual\n'
               '2 - Consultar operações pendentes ou incertas\n3 - Recuperar resultado de operação\n'
-              '4 - Consultar eventos e liquidações\n0 - Voltar')
+              '4 - Consultar eventos e liquidações\n5 - Registrar operação imediata\n0 - Voltar')
         try:
             opcao = entrada('Opção: ').strip()
             if opcao == '0':
@@ -237,16 +345,18 @@ def menu_eventos_financeiros(*, entrada=input, saida=print, armazenamento=None):
                 if not registros:
                     saida('Nenhuma intenção pendente ou incerta.')
                 for r in registros:
-                    saida(f"{r['chave']} — {r['estado']}")
+                    saida(f"{r['chave']} — {r['estado']} — {json.loads(r['payload'])['servico']}")
             elif opcao == '3':
                 chave = entrada('Chave original: ').strip()
                 r = diario.obter(chave)
                 saida('A recuperação repetirá exatamente o payload persistido, com a mesma chave.')
                 saida(r['payload'])
                 if entrada('Digite SIM para recuperar: ').strip() == 'SIM':
-                    _recibo(diario.executar(chave), saida)
+                    _recibo(diario.executar(chave), saida, r)
             elif opcao == '4':
                 menu_consultas_eventos(entrada=entrada, saida=saida)
+            elif opcao == '5':
+                registrar_imediata(entrada=entrada, saida=saida, armazenamento=diario)
             else:
                 saida('Opção inválida.')
         except (EOFError, KeyboardInterrupt):

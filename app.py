@@ -77,11 +77,12 @@ from utils import (
 
 from datetime import datetime
 from datetime import timedelta
+import sqlite3
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.prompt import Prompt
-from interface_eventos import menu_eventos_financeiros
+from interface_eventos import menu_eventos_financeiros, permitir_alteracao_legada
 
 console = Console()
 
@@ -690,6 +691,9 @@ def editar_lancamento():
         print("Lançamento não encontrado.")
         return
 
+    if not permitir_alteracao_legada(id_lancamento, saida=print):
+        return
+
     (
         id_atual,
         data_atual,
@@ -858,14 +862,20 @@ def editar_lancamento():
         print("Opção inválida.")
         return
 
-    sucesso = atualizar_lancamento(
-        id_lancamento,
-        nova_data,
-        nova_descricao,
-        novo_tipo,
-        nova_categoria_id,
-        novo_valor
-    )
+    if not permitir_alteracao_legada(id_lancamento, saida=print):
+        return
+    try:
+        sucesso = atualizar_lancamento(
+            id_lancamento,
+            nova_data,
+            nova_descricao,
+            novo_tipo,
+            nova_categoria_id,
+            novo_valor
+        )
+    except sqlite3.IntegrityError:
+        print('Alteração recusada pelas restrições do banco. Consulte os vínculos do lançamento.')
+        return
 
     print()
 
@@ -907,13 +917,17 @@ def excluir_lancamento_menu():
         print("Lançamento não encontrado.")
         return
 
+    if not permitir_alteracao_legada(id_lancamento, saida=print):
+        return
+
     (
         id_lancamento,
         data,
         descricao,
         tipo,
         categoria,
-        valor
+        valor,
+        categoria_id
     ) = lancamento
 
     print()
@@ -959,9 +973,15 @@ def excluir_lancamento_menu():
         print("Opção inválida.")
         return
 
-    sucesso = excluir_lancamento(
-        id_lancamento
-    )
+    if not permitir_alteracao_legada(id_lancamento, saida=print):
+        return
+    try:
+        sucesso = excluir_lancamento(
+            id_lancamento
+        )
+    except sqlite3.IntegrityError:
+        print('Exclusão recusada pelas restrições do banco. Consulte os vínculos do lançamento.')
+        return
 
     print()
 
